@@ -1,0 +1,35 @@
+name: Validate Store
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run validate
+      # Do not execute code from candidate repositories or from a PR-selected platform ref.
+      - uses: actions/checkout@v4
+        with:
+          repository: nyakang/nyaterm
+          ref: 8debbfbc9f24dbe556e94fb91451ce2dacfa9aa0
+          path: work/platform
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.94.0
+      - run: cargo build --locked --manifest-path work/platform/src-tauri/crates/nyaterm-plugin-runtime/Cargo.toml --bin nyaterm-plugin
+      - run: npm test
+        env:
+          NYATERM_PLUGIN_CLI: ${{ github.workspace }}/work/platform/src-tauri/crates/nyaterm-plugin-runtime/target/debug/nyaterm-plugin
+      - run: npm run validate -- --packages
+        env:
+          NYATERM_PLUGIN_CLI: ${{ github.workspace }}/work/platform/src-tauri/crates/nyaterm-plugin-runtime/target/debug/nyaterm-plugin
+          NYATERM_APP_VERSION: 1.2.12

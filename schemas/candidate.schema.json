@@ -1,0 +1,64 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://nyaterm.app/schemas/store/candidate.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+    "target": {
+      "enum": [
+        "universal",
+        "windows-x86_64",
+        "windows-aarch64",
+        "linux-x86_64",
+        "linux-aarch64",
+        "macos-x86_64",
+        "macos-aarch64"
+      ]
+    },
+    "url": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "format": "uri",
+      "pattern": "^https://"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "size": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 134217728
+    },
+    "permissions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2048
+      },
+      "maxItems": 24,
+      "uniqueItems": true
+    },
+    "releaseNotes": {
+      "type": "string",
+      "maxLength": 20000
+    }
+  },
+  "required": [
+    "version",
+    "target",
+    "url",
+    "sha256",
+    "size",
+    "permissions",
+    "releaseNotes"
+  ]
+}

@@ -1,0 +1,6 @@
+node_modules/
+work/
+*.nyap
+*.pem
+*.key
+.env*

@@ -1,0 +1,98 @@
+name: Sign approved plugin
+on:
+  workflow_dispatch:
+    inputs:
+      plugin:
+        description: Reviewed plugin ID on main
+        required: true
+      version:
+        description: Reviewed candidate version
+        required: true
+      target:
+        type: choice
+        required: true
+        options:
+          [
+            universal,
+            windows-x86_64,
+            windows-aarch64,
+            linux-x86_64,
+            linux-aarch64,
+            macos-x86_64,
+            macos-aarch64,
+          ]
+      key_id:
+        description: Active signing key ID
+        default: nyaterm-store-release-2026
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: plugin-signing
+  cancel-in-progress: false
+jobs:
+  sign:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: plugin-signing
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run validate
+      - uses: actions/checkout@v4
+        with:
+          repository: nyakang/nyaterm
+          ref: 8debbfbc9f24dbe556e94fb91451ce2dacfa9aa0
+          path: work/platform
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.94.0
+      - run: cargo build --locked --manifest-path work/platform/src-tauri/crates/nyaterm-plugin-runtime/Cargo.toml --bin nyaterm-plugin
+      - name: Sign the exact reviewed candidate
+        run: node scripts/sign-plugin.mjs "$PLUGIN_ID" "$PLUGIN_VERSION" "$PLUGIN_TARGET" "$KEY_ID" work/signed
+        env:
+          PLUGIN_ID: ${{ inputs.plugin }}
+          PLUGIN_VERSION: ${{ inputs.version }}
+          PLUGIN_TARGET: ${{ inputs.target }}
+          KEY_ID: ${{ inputs.key_id }}
+          NYATERM_STORE_SIGNING_KEY: ${{ secrets.NYATERM_STORE_SIGNING_KEY }}
+          NYATERM_PLUGIN_CLI: ${{ github.workspace }}/work/platform/src-tauri/crates/nyaterm-plugin-runtime/target/debug/nyaterm-plugin
+          NYATERM_APP_VERSION: 1.2.12
+      - name: Publish immutable official artifact
+        run: |
+          TAG=$(node -p "JSON.parse(require('fs').readFileSync('work/signed/release.json')).tag")
+          ASSET=$(node -p "JSON.parse(require('fs').readFileSync('work/signed/release.json')).asset")
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --notes "Reviewed and signed NyaTerm plugin."
+          fi
+          gh release upload "$TAG" "work/signed/$ASSET"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Create catalog update for maintainer review
+        run: |
+          BRANCH="store-signed-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c "$BRANCH"
+          git add plugins catalog
+          git commit -m "feat: publish signed plugin artifact"
+          git push origin "$BRANCH"
+          cat > work/pr-body.md <<'BODY'
+          Publishes the reviewed candidate as an official Ed25519 signed artifact and regenerates the catalog. The candidate digest and manifest were checked before signing; the final package SHA-256 is recorded in metadata.
+          BODY
+          gh pr create --base main --head "$BRANCH" --title "Publish signed plugin artifact" --body-file work/pr-body.md
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: signed-plugin
+          path: |
+            work/signed/*-*-*.nyap
+            work/signed/release.json
