@@ -1,21 +1,21 @@
+import { paths } from "../lib/paths.mjs";
+import { buildCatalog, validateRecords } from "../lib/records.mjs";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { unzipSync } from "fflate";
 import {
-  buildCatalog,
   download,
   inspect,
   matchManifest,
   read,
   schema,
-  validateRecords,
   verifySignature,
-} from "./common.mjs";
+} from "../lib/common.mjs";
 
 const { plugins, keys } = validateRecords();
 const expected = buildCatalog(plugins);
-const actual = read("catalog/index.json");
+const actual = read(paths.catalog);
 schema("catalog", actual);
 if (JSON.stringify(expected) !== JSON.stringify(actual))
   throw new Error("Catalog is stale; run npm run catalog");

@@ -1,16 +1,15 @@
+import { buildCatalog, validateRecords } from "../lib/records.mjs";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
 import test from "node:test";
 import {
-  buildCatalog,
   https,
   matchManifest,
   permissions,
   samePermissions,
   schema,
-  validateRecords,
   verifySignature,
-} from "./common.mjs";
+} from "../lib/common.mjs";
 
 test("repository starts with a deterministic, schema-valid empty catalog", () => {
   const { plugins } = validateRecords();

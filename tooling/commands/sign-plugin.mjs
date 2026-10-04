@@ -1,19 +1,18 @@
+import { extensionPaths, paths, root } from "../lib/paths.mjs";
+import { buildCatalog, validateRecords } from "../lib/records.mjs";
 import { createPrivateKey, createPublicKey, sign } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { unzipSync, zipSync } from "fflate";
-import semver from "semver";
 import {
-  buildCatalog,
   download,
   inspect,
   matchManifest,
   samePermissions,
   sha256,
-  validateRecords,
   verifySignature,
   write,
-} from "./common.mjs";
+} from "../lib/common.mjs";
 
 const [id, version, target, keyId, outputDirectory] = process.argv.slice(2);
 if (!outputDirectory)
@@ -66,7 +65,8 @@ if (signed.length > 128 * 1024 * 1024)
   throw new Error("Signed package exceeds size limit");
 const asset = `${id}-${version}-${target}.nyap`;
 const signedPath = path.join(outputDirectory, asset);
-writeFileSync(signedPath, signed);
+// Never replace a previously assembled release asset, even on a local retry.
+writeFileSync(signedPath, signed, { flag: "wx" });
 matchManifest(inspect(signedPath).manifest, plugin, candidate);
 const tag = `plugin-${id}-v${version}`;
 const artifact = {
@@ -87,15 +87,15 @@ if (!release) {
     permissions: candidate.permissions,
     artifacts: [],
   };
-  plugin.versions.push(release);
 }
 release.artifacts.push(artifact);
-plugin.versions.sort((a, b) => semver.rcompare(a.version, b.version));
-plugin.latestVersion = plugin.versions[0].version;
-plugin.permissions = plugin.versions[0].permissions;
-plugin.candidates = plugin.candidates.filter((c) => c !== candidate);
-write(`plugins/${id}.json`, plugin);
-write("catalog/index.json", buildCatalog(validateRecords().plugins));
+release.artifacts.sort((a, b) =>
+  a.target < b.target ? -1 : a.target > b.target ? 1 : 0,
+);
+const files = extensionPaths(id);
+write(`${files.releases}/${version}.json`, release);
+unlinkSync(path.join(root, `${files.submissions}/${version}/${target}.json`));
+write(paths.catalog, buildCatalog(validateRecords().plugins));
 writeFileSync(
   path.join(outputDirectory, "release.json"),
   `${JSON.stringify({ tag, asset, signedPath, sha256: artifact.sha256 }, null, 2)}\n`,

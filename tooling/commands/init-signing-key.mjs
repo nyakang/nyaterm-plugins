@@ -1,3 +1,4 @@
+import { paths } from "../lib/paths.mjs";
 import { generateKeyPairSync } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
@@ -9,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { read, root, write } from "./common.mjs";
+import { read, root, write } from "../lib/common.mjs";
 
 const [keyId, privateFile, clientTrustFile] = process.argv.slice(2);
 if (
@@ -35,7 +36,7 @@ function outsideRepositories(file) {
 }
 outsideRepositories(output);
 if (existsSync(output)) throw new Error("Refusing to overwrite a private key");
-const keys = read("signing-keys.json");
+const keys = read(paths.keys);
 if (keys.keys.some((key) => key.id === keyId))
   throw new Error("Signing key ID already exists");
 const source = readFileSync(client, "utf8");
@@ -87,7 +88,7 @@ keys.keys.push({
   status: "active",
   purpose: "repository-package-signing",
 });
-write("signing-keys.json", keys);
+write(paths.keys, keys);
 writeFileSync(
   client,
   source.replace(

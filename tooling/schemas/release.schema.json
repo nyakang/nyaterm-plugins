@@ -1,0 +1,85 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://nyaterm.app/schemas/store/release.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+    "releasedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "releaseNotes": {
+      "type": "string",
+      "maxLength": 20000
+    },
+    "permissions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2048
+      },
+      "maxItems": 24,
+      "uniqueItems": true
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "target": {
+            "enum": [
+              "universal",
+              "windows-x86_64",
+              "windows-aarch64",
+              "linux-x86_64",
+              "linux-aarch64",
+              "macos-x86_64",
+              "macos-aarch64"
+            ]
+          },
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "format": "uri",
+            "pattern": "^https://"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 134217728
+          },
+          "signingKeyId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          }
+        },
+        "required": ["target", "url", "sha256", "size", "signingKeyId"]
+      },
+      "maxItems": 7,
+      "uniqueItems": true,
+      "minItems": 1
+    }
+  },
+  "required": [
+    "version",
+    "releasedAt",
+    "releaseNotes",
+    "permissions",
+    "artifacts"
+  ]
+}

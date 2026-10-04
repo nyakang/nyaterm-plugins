@@ -55,7 +55,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.94.0
       - run: cargo build --locked --manifest-path work/platform/src-tauri/crates/nyaterm-plugin-runtime/Cargo.toml --bin nyaterm-plugin
       - name: Sign the exact reviewed candidate
-        run: node scripts/sign-plugin.mjs "$PLUGIN_ID" "$PLUGIN_VERSION" "$PLUGIN_TARGET" "$KEY_ID" work/signed
+        run: node tooling/commands/sign-plugin.mjs "$PLUGIN_ID" "$PLUGIN_VERSION" "$PLUGIN_TARGET" "$KEY_ID" work/signed
         env:
           PLUGIN_ID: ${{ inputs.plugin }}
           PLUGIN_VERSION: ${{ inputs.version }}
@@ -80,7 +80,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git switch -c "$BRANCH"
-          git add plugins catalog
+          git add extensions public
           git commit -m "feat: publish signed plugin artifact"
           git push origin "$BRANCH"
           cat > work/pr-body.md <<'BODY'

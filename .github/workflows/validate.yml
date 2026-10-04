@@ -15,8 +15,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm test
-      - run: npm run validate
+      - name: Test extension records and catalog generation
+        run: npm test
+      - name: Check records and public catalog drift
+        run: npm run validate
       # Do not execute code from candidate repositories or from a PR-selected platform ref.
       - uses: actions/checkout@v4
         with:
@@ -26,10 +28,12 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@1.94.0
       - run: cargo build --locked --manifest-path work/platform/src-tauri/crates/nyaterm-plugin-runtime/Cargo.toml --bin nyaterm-plugin
-      - run: npm test
+      - name: Test real packaging and selective submission signing
+        run: npm test
         env:
           NYATERM_PLUGIN_CLI: ${{ github.workspace }}/work/platform/src-tauri/crates/nyaterm-plugin-runtime/target/debug/nyaterm-plugin
-      - run: npm run validate -- --packages
+      - name: Inspect submitted and published packages
+        run: npm run validate -- --packages
         env:
           NYATERM_PLUGIN_CLI: ${{ github.workspace }}/work/platform/src-tauri/crates/nyaterm-plugin-runtime/target/debug/nyaterm-plugin
           NYATERM_APP_VERSION: 1.2.12

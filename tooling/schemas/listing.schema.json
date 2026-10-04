@@ -1,0 +1,69 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://nyaterm.app/schemas/store/listing.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._-]*\\.[a-z0-9._-]+$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "publisher": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "maxItems": 24,
+      "uniqueItems": true
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "format": "uri",
+      "pattern": "^https://"
+    },
+    "homepage": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "format": "uri",
+      "pattern": "^https://"
+    },
+    "license": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "description",
+    "publisher",
+    "tags",
+    "source",
+    "homepage",
+    "license"
+  ]
+}
