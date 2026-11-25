@@ -98,6 +98,21 @@ class PrepareAndroidTests(unittest.TestCase):
         self.assertEqual((self.prefix / "LICENSE.txt").read_text(), "fixture license\n")
         self.assertEqual(json.loads((self.prefix / "SOURCE.json").read_text())["target"], X64)
 
+    def test_macos_cache_without_deployment_floor_is_rebuilt(self) -> None:
+        target = "aarch64-apple-darwin"
+        self.prefix = self.staging / "ffmpeg" / target
+        with self.preparation():
+            prepare_android.prepare_ffmpeg(target)
+            stamp = self.prefix / "SOURCE.json"
+            current = json.loads(stamp.read_text())
+            old = dict(current, configure=[x for x in current["configure"] if "mmacosx-version-min" not in x])
+            self.assertNotEqual(current, old)
+            stamp.write_text(json.dumps(old))
+            self.commands.clear()
+            prepare_android.prepare_ffmpeg(target)
+            self.assertIn(["make", "install"], self.commands)
+            self.assertEqual(json.loads(stamp.read_text()), current)
+
     def test_complete_cache_preserves_import_libraries_without_build_or_tools(self) -> None:
         with self.preparation():
             prepare_android.prepare_ffmpeg(X64)

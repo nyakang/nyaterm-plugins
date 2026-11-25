@@ -256,7 +256,11 @@ def prepare_ffmpeg(target: str) -> Path:
             options.extend(["--cc=cl.exe -MT", "--cxx=cl.exe -MT", "--enable-cross-compile",
                             "--as=clang --target=aarch64-pc-windows-msvc"])
     elif "apple" in target:
-        options.extend(["--install-name-dir=@rpath", "--arch=aarch64" if target.startswith("aarch64") else "--arch=x86_64"])
+        # Record the deployment floor in the cache identity, not only in the
+        # runner environment; old libraries built for the runner OS must rebuild.
+        options.extend(["--install-name-dir=@rpath", "--extra-cflags=-mmacosx-version-min=12.0",
+                        "--extra-ldflags=-mmacosx-version-min=12.0",
+                        "--arch=aarch64" if target.startswith("aarch64") else "--arch=x86_64"])
     provenance = {**METADATA["ffmpeg"], "target": target, "configure": [option.replace(str(prefix), "${FFMPEG_DIR}").replace(str(source), "${FFMPEG_SOURCE}") for option in options]}
     if stamp.is_file() and json.loads(stamp.read_text()) == provenance:
         if "windows" in target:
