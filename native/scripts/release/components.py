@@ -128,8 +128,10 @@ def sign_bytes(raw: bytes) -> str:
     with tempfile.TemporaryDirectory(prefix="native-sign-") as temporary:
         path = Path(temporary) / "payload"
         path.write_bytes(raw)
-        result = subprocess.run(["npx", "--yes", "@tauri-apps/cli@2.10.0", "signer", "sign", "--password",
-                                 env["TAURI_SIGNING_PRIVATE_KEY_PASSWORD"], str(path)], capture_output=True, env=env)
+        if not env.get("TAURI_SIGNING_PRIVATE_KEY_PASSWORD"):
+            raise ValueError("Signing password is required")
+        result = subprocess.run([shutil.which("npx") or "npx", "--yes", "@tauri-apps/cli@2.10.0", "signer", "sign",
+                                 str(path)], capture_output=True, env=env)
         if result.returncode:
             raise RuntimeError("Native signing failed; signer diagnostics withheld")
         return base64.b64decode(path.with_suffix(".sig").read_bytes().strip(), validate=True).decode()

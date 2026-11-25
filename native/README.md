@@ -120,3 +120,19 @@ Validate download/install/launch using an isolated application data directory.
 Exercise updates and rollback with controlled test versions, not fake production
 releases. Real Android and remote-server sessions and Linux/macOS runtime checks
 remain separate acceptance steps; record unavailable devices/platforms explicitly.
+
+Host acceptance commands (run in the NyaTerm repository):
+
+```powershell
+$env:NYATERM_TEST_NATIVE_COMPONENT = 'vnc' # repeat for rdp, spice, android
+cargo test -p nyaterm-plugin-host --test native_acceptance public_release_installs_and_reopens_in_isolated_registry -- --ignored
+# Local signed test ZIPs only; these versions must never be published.
+$env:NYATERM_NATIVE_TEST_OLD = 'absolute/path/to/old.zip'
+$env:NYATERM_NATIVE_TEST_NEW = 'absolute/path/to/new.zip'
+cargo test -p nyaterm-plugin-host --test native_acceptance signed_import_update_rollback_and_failed_install_preserve_selection -- --ignored
+```
+
+These tests create isolated registries and reject helper path overrides. They
+validate installation and selection, not real-device or remote-server sessions.
+The publication job also verifies the public downloads, with bounded retries for
+index cache propagation; its result is included in the publication summary.

@@ -44,6 +44,8 @@ class PreflightTests(unittest.TestCase):
     def test_key_decoded_only_into_child_environment(self):
         def signer(command, **kwargs):
             self.assertEqual(kwargs["env"]["TAURI_SIGNING_PRIVATE_KEY"], "fixture-key")
+            self.assertNotIn("fixture-password", command)
+            self.assertNotIn("fixture-key", command)
             self.assertNotIn("TAURI_SIGNING_PRIVATE_KEY_B64", kwargs["env"])
             Path(command[-1]).with_suffix(".sig").write_bytes(base64.b64encode(b"signature"))
             return mock.Mock(returncode=0)

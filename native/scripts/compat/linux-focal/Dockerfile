@@ -60,5 +60,9 @@ RUN if ! getent passwd "$BUILDER_UID" >/dev/null; then \
       useradd -m -u "$BUILDER_UID" -g "$BUILDER_GID" builder; \
     fi
 
+# Only this build container trusts the explicitly mounted source checkout.
+# Focal's Git predates GIT_CONFIG_COUNT, so use protected system config.
+RUN git config --system --add safe.directory /src
+
 WORKDIR /src
 CMD ["bash", "scripts/compat/linux-focal/build.sh"]

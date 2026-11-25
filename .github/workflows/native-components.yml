@@ -111,7 +111,7 @@ jobs:
         if: inputs.component == 'spice'
         shell: bash
         run: |
-          python -m pip install pefile==2024.8.26 zstandard==0.25.0 pyparsing==3.2.5
+          python -m pip install pefile==2024.8.26 zstandard==0.25.0 pyparsing==3.2.5 meson==1.5.2
           if [ "$RUNNER_OS" != Windows ]; then bash scripts/ci/install-spice-deps.sh; fi
       - name: Validate contracts and packaging
         run: |
@@ -150,7 +150,7 @@ jobs:
       - name: Build glibc 2.31 component
         run: |
           docker build --build-arg RUST_VERSION=1.99.1 -t native-focal scripts/compat/linux-focal
-          docker run --rm -e COMPONENT -e HOST_VERSION -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/src -v "$GITHUB_WORKSPACE:/src" -w /src/native native-focal bash scripts/compat/linux-focal/build.sh
+          docker run --rm -e COMPONENT -e HOST_VERSION -v "$GITHUB_WORKSPACE:/src" -w /src/native native-focal bash scripts/compat/linux-focal/build.sh
       - uses: actions/upload-artifact@v4
         with:
           name: native-${{ inputs.component }}-glibc231
@@ -236,6 +236,27 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_B64: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_B64 }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: python scripts/release/publish.py --directory dist --report publication.json
+      - name: Verify published downloads
+        run: |
+          python - <<'PY'
+          import json, sys, time
+          from pathlib import Path
+          sys.path.insert(0, 'scripts/release')
+          from components import inspect
+          from verify_public import verify
+          manifest = inspect(next(Path('dist').glob('*.zip')))[0]
+          for attempt in range(5):
+              try:
+                  result = verify([manifest['component']], manifest['component_version'])
+                  report = json.loads(Path('publication.json').read_text())
+                  report['public_verification'] = result
+                  Path('publication.json').write_text(json.dumps(report, indent=2) + '\n')
+                  print(json.dumps(result))
+                  break
+              except Exception:
+                  if attempt == 4: raise
+                  time.sleep(15)
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
