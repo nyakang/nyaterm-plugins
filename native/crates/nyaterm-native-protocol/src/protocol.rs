@@ -5,6 +5,8 @@ use crate::secret::SecretString;
 use serde::{Deserialize, Serialize};
 
 pub const PROTOCOL_VERSION: u32 = 13;
+/// VNC evolves independently from the RDP contract.
+pub const VNC_PROTOCOL_VERSION: u32 = 13;
 
 /// Maximum UTF-8 payload accepted for a single committed-text event.
 ///
