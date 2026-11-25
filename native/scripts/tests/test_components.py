@@ -5,13 +5,34 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "release"))
 from components import inspect, write_package, verify_binaries
 from publish import merge
+import components
+import prepare_android
 
 
 class ComponentsTests(unittest.TestCase):
+    def test_android_lifecycle_build_does_not_overwrite_production_helper(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = "x86_64-pc-windows-msvc"
+            production = root / target / "release/nyaterm-android-helper.exe"
+            production.parent.mkdir(parents=True)
+            production.write_bytes(b"production")
+            def cargo(command, **kwargs):
+                output = Path(command[command.index("--target-dir") + 1]) if "--target-dir" in command else root
+                helper = output / target / "release/nyaterm-android-helper.exe"
+                helper.parent.mkdir(parents=True, exist_ok=True)
+                helper.write_bytes(b"NYATERM_ANDROID_TEST_ENDPOINT")
+            with mock.patch.dict(components.os.environ, {"CARGO_TARGET_DIR": str(root)}), mock.patch.object(sys, "argv", ["components.py", "test", "--component", "android", "--target", target]), mock.patch.object(prepare_android, "prepare", return_value=(root, root)), mock.patch.object(components.subprocess, "run", side_effect=cargo):
+                components.main()
+            self.assertEqual(production.read_bytes(), b"production")
+            with self.assertRaisesRegex(ValueError, "test-support"):
+                verify_binaries(root / "android-tests", target, "windows-msvc")
+
     def test_independent_version_inventory_round_trip_and_tamper_rejection(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

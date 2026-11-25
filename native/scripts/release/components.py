@@ -165,6 +165,8 @@ def verify_binaries(directory: Path, target: str, runtime: str) -> None:
     for path in directory.rglob("*"):
         if not path.is_file(): continue
         data = path.read_bytes()
+        if path.name in ("nyaterm-android-helper", "nyaterm-android-helper.exe") and b"NYATERM_ANDROID_TEST_ENDPOINT" in data:
+            raise ValueError("test-support Android helper cannot be packaged")
         if data[:2] == b"MZ":
             # Official Windows platform-tools is x86 and runs under Windows emulation.
             expected = 0x14C if path.relative_to(directory).as_posix().startswith("adb/") else (0xAA64 if arm else 0x8664)
@@ -248,7 +250,11 @@ def main() -> None:
             environment["PATH"] = str(ffmpeg / "bin") + os.pathsep + environment.get("PATH", "")
             environment["LD_LIBRARY_PATH"] = str(ffmpeg / "lib") + os.pathsep + environment.get("LD_LIBRARY_PATH", "")
         command = ["cargo", "test", "--locked", "--release", "--target", args.target, "-p", f"nyaterm-{args.component}-helper"]
-        if args.component == "android": command += ["--features", "test-support"]
+        if args.component == "android":
+            # Cargo also builds the executable for lifecycle tests. Its optional
+            # synthetic endpoint must never overwrite the production package input.
+            test_target = Path(environment.get("CARGO_TARGET_DIR", ROOT / "target")) / "android-tests"
+            command += ["--features", "test-support", "--target-dir", str(test_target)]
         subprocess.run(command, cwd=ROOT, env=environment, check=True)
         return
     if args.operation == "build":
