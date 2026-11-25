@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import tempfile
 from urllib.parse import urlparse
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from components import IDS, MAX_ARCHIVE, PLATFORMS, digest, inspect, verify_signature
 
@@ -17,7 +17,8 @@ def download(url, destination, limit):
     parsed = urlparse(url)
     if parsed.scheme != "https" or parsed.netloc != "downloads.nyaterm.app" or not parsed.path.startswith("/native/v1/") or parsed.fragment:
         raise ValueError("untrusted native download URL")
-    with urlopen(url, timeout=30) as response, destination.open("wb") as output:
+    request = Request(url, headers={"User-Agent": "nyaterm-native-release/1"})
+    with urlopen(request, timeout=30) as response, destination.open("wb") as output:
         if response.url != url:
             raise ValueError("native downloads must not redirect")
         size = 0

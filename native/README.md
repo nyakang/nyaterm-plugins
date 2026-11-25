@@ -93,6 +93,12 @@ signed artifact is unavailable, increment the helper version. Index conflicts
 require a fresh publication attempt, which reads and verifies the current index.
 Publish components sequentially; the shared index job is serialized.
 
+If upload and index publication succeeded but public verification failed, the
+read-only **Verify published native components** workflow can recheck the existing
+release after fixing CDN/client issues. Select the component (or `all`) and version;
+it verifies signatures and every platform archive and preserves a verification
+report without credentials, rebuilding, signing, or writing to R2.
+
 Assets live at `native/v1/<component>/<version>/<target>/<runtime>/component.zip`.
 They are immutable. The signed index is replaced with an ETag condition only after
 all asset writes/readbacks succeed; previous releases remain in the index. Failed

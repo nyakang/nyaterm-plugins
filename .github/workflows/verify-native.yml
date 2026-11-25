@@ -1,0 +1,50 @@
+name: Verify published native components
+on:
+  workflow_dispatch:
+    inputs:
+      component:
+        type: choice
+        options: [all, android, rdp, vnc, spice]
+        default: all
+        required: true
+      version:
+        description: Published component version
+        default: '1.0.0'
+        required: true
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: native
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: sudo apt-get update && sudo apt-get install -y minisign
+      - name: Verify public signatures and all platform archives
+        env:
+          COMPONENT: ${{ inputs.component }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          python - <<'PY'
+          import json, os, sys
+          from pathlib import Path
+          sys.path.insert(0, 'scripts/release')
+          from components import IDS
+          from verify_public import verify
+          component = os.environ['COMPONENT']
+          result = verify(list(IDS) if component == 'all' else [component], os.environ['VERSION'])
+          report = json.dumps(result, indent=2) + '\n'
+          Path('public-verification.json').write_text(report, encoding='utf-8')
+          print(report)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-public-verification-${{ inputs.component }}-${{ github.run_attempt }}
+          path: native/public-verification.json
+          if-no-files-found: error
