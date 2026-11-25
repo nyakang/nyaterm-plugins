@@ -12,9 +12,9 @@ authors = ["Kang"]
 anyhow = "1"
 base64 = "0.22"
 dirs = "6"
-ironrdp-cfg = { git = "https://github.com/nyakang/IronRDP", rev = "60d2f6eae6bd40cae3a19757bde5cb7274fd6e23" }
-ironrdp-input = { git = "https://github.com/nyakang/IronRDP", rev = "60d2f6eae6bd40cae3a19757bde5cb7274fd6e23" }
-ironrdp-rdpdr-native = { git = "https://github.com/nyakang/IronRDP", rev = "60d2f6eae6bd40cae3a19757bde5cb7274fd6e23" }
+ironrdp-cfg = { git = "https://github.com/nyakang/IronRDP", rev = "370d512abc4f2460cea320231dc61d9498a1c304" }
+ironrdp-input = { git = "https://github.com/nyakang/IronRDP", rev = "370d512abc4f2460cea320231dc61d9498a1c304" }
+ironrdp-rdpdr-native = { git = "https://github.com/nyakang/IronRDP", rev = "370d512abc4f2460cea320231dc61d9498a1c304" }
 rustls = { version = "0.23.43", default-features = false, features = ["aws_lc_rs", "std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
@@ -29,23 +29,23 @@ vnc = { package = "vnc-rs", git = "https://github.com/nyakang/vnc-rs", rev = "3e
 zeroize = "1"
 
 [patch.crates-io]
-ironrdp-client = { git = "https://github.com/nyakang/IronRDP", rev = "60d2f6eae6bd40cae3a19757bde5cb7274fd6e23" }
+ironrdp-client = { git = "https://github.com/nyakang/IronRDP", rev = "370d512abc4f2460cea320231dc61d9498a1c304" }
 picky = { version = "=7.0.0-rc.29", git = "https://github.com/nyakang/picky-rs", rev = "1977c9f86465e63966b69e4e6368064a33d32c8f" }
 picky-asn1 = { git = "https://github.com/nyakang/picky-rs", rev = "1977c9f86465e63966b69e4e6368064a33d32c8f" }
 picky-asn1-der = { git = "https://github.com/nyakang/picky-rs", rev = "1977c9f86465e63966b69e4e6368064a33d32c8f" }
 picky-asn1-x509 = { git = "https://github.com/nyakang/picky-rs", rev = "1977c9f86465e63966b69e4e6368064a33d32c8f" }
-ironrdp-connector = { git = "https://github.com/nyakang/IronRDP", rev = "60d2f6eae6bd40cae3a19757bde5cb7274fd6e23" }
+ironrdp-connector = { git = "https://github.com/nyakang/IronRDP", rev = "370d512abc4f2460cea320231dc61d9498a1c304" }
 sspi = { git = "https://github.com/nyakang/sspi-rs", rev = "805b48a3bbdf093856f528341e2f08462a9d383b" }
-ironrdp-cliprdr = { git = "https://github.com/nyakang/IronRDP", rev = "60d2f6eae6bd40cae3a19757bde5cb7274fd6e23" }
-ironrdp-core = { git = "https://github.com/nyakang/IronRDP", rev = "60d2f6eae6bd40cae3a19757bde5cb7274fd6e23" }
-ironrdp-error = { git = "https://github.com/nyakang/IronRDP", rev = "60d2f6eae6bd40cae3a19757bde5cb7274fd6e23" }
-ironrdp-input = { git = "https://github.com/nyakang/IronRDP", rev = "60d2f6eae6bd40cae3a19757bde5cb7274fd6e23" }
-ironrdp-pdu = { git = "https://github.com/nyakang/IronRDP", rev = "60d2f6eae6bd40cae3a19757bde5cb7274fd6e23" }
-ironrdp-rdpeai = { git = "https://github.com/nyakang/IronRDP", rev = "60d2f6eae6bd40cae3a19757bde5cb7274fd6e23" }
-ironrdp-rdpsnd = { git = "https://github.com/nyakang/IronRDP", rev = "60d2f6eae6bd40cae3a19757bde5cb7274fd6e23" }
-ironrdp-rdpsnd-native = { git = "https://github.com/nyakang/IronRDP", rev = "60d2f6eae6bd40cae3a19757bde5cb7274fd6e23" }
-ironrdp-svc = { git = "https://github.com/nyakang/IronRDP", rev = "60d2f6eae6bd40cae3a19757bde5cb7274fd6e23" }
-ironrdp-tls = { git = "https://github.com/nyakang/IronRDP", rev = "60d2f6eae6bd40cae3a19757bde5cb7274fd6e23" }
+ironrdp-cliprdr = { git = "https://github.com/nyakang/IronRDP", rev = "370d512abc4f2460cea320231dc61d9498a1c304" }
+ironrdp-core = { git = "https://github.com/nyakang/IronRDP", rev = "370d512abc4f2460cea320231dc61d9498a1c304" }
+ironrdp-error = { git = "https://github.com/nyakang/IronRDP", rev = "370d512abc4f2460cea320231dc61d9498a1c304" }
+ironrdp-input = { git = "https://github.com/nyakang/IronRDP", rev = "370d512abc4f2460cea320231dc61d9498a1c304" }
+ironrdp-pdu = { git = "https://github.com/nyakang/IronRDP", rev = "370d512abc4f2460cea320231dc61d9498a1c304" }
+ironrdp-rdpeai = { git = "https://github.com/nyakang/IronRDP", rev = "370d512abc4f2460cea320231dc61d9498a1c304" }
+ironrdp-rdpsnd = { git = "https://github.com/nyakang/IronRDP", rev = "370d512abc4f2460cea320231dc61d9498a1c304" }
+ironrdp-rdpsnd-native = { git = "https://github.com/nyakang/IronRDP", rev = "370d512abc4f2460cea320231dc61d9498a1c304" }
+ironrdp-svc = { git = "https://github.com/nyakang/IronRDP", rev = "370d512abc4f2460cea320231dc61d9498a1c304" }
+ironrdp-tls = { git = "https://github.com/nyakang/IronRDP", rev = "370d512abc4f2460cea320231dc61d9498a1c304" }
 
 [profile.dev]
 debug = "line-tables-only"

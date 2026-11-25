@@ -35,6 +35,7 @@ fn recv(stdout: &mut impl std::io::Read) -> RdpControlMessage {
 fn client_hello() -> RdpControlMessage {
     RdpControlMessage::ClientHello {
         version: PROTOCOL_VERSION,
+        frame_update_complete: true,
     }
 }
 
@@ -46,6 +47,7 @@ fn assert_server_hello(message: RdpControlMessage) {
             capabilities: RdpServerCapabilities {
                 committed_unicode_text: true,
                 secure_attention: true,
+                frame_update_complete: true,
             },
         }
     ));
@@ -146,6 +148,11 @@ fn non_client_hello_messages() -> Vec<RdpControlMessage> {
             session_id: "test-session".to_string(),
             config: test_config(),
         },
+        RdpControlMessage::FrameUpdateComplete {
+            session_id: "test-session".to_string(),
+            epoch: 1,
+            sequence: 1,
+        },
         RdpControlMessage::DesktopReset {
             session_id: "test-session".to_string(),
             epoch: 1,
@@ -210,6 +217,11 @@ fn helper_only_messages() -> Vec<RdpControlMessage> {
         RdpControlMessage::ServerHello {
             version: PROTOCOL_VERSION,
             capabilities: RdpServerCapabilities::default(),
+        },
+        RdpControlMessage::FrameUpdateComplete {
+            session_id: "test-session".to_string(),
+            epoch: 1,
+            sequence: 1,
         },
         RdpControlMessage::DesktopReset {
             session_id: "test-session".to_string(),
@@ -347,6 +359,25 @@ fn pipelined_client_hello_and_connect_still_emit_server_hello_first() {
 }
 
 #[test]
+fn legacy_version_thirteen_hello_without_extension_still_connects() {
+    let mut child = spawn_helper();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    let packet =
+        nyaterm_remote_desktop::Packet::control(br#"{"ClientHello":{"version":13}}"#.to_vec())
+            .unwrap();
+    write_packet(&mut stdin, &packet).unwrap();
+    assert_server_hello(recv(&mut stdout));
+    send(&mut stdin, &RdpControlMessage::Ping { sequence: 1 });
+    assert!(matches!(
+        recv(&mut stdout),
+        RdpControlMessage::Pong { sequence: 1 }
+    ));
+    drop(stdin);
+    assert!(child.wait().unwrap().success());
+}
+
+#[test]
 fn every_non_client_hello_message_and_frame_fail_before_hello() {
     for message in non_client_hello_messages() {
         assert_helper_rejects(vec![message]);
@@ -358,6 +389,7 @@ fn every_non_client_hello_message_and_frame_fail_before_hello() {
 fn repeated_hello_wrong_version_and_helper_only_messages_fail_closed() {
     assert_helper_rejects(vec![RdpControlMessage::ClientHello {
         version: PROTOCOL_VERSION - 1,
+        frame_update_complete: false,
     }]);
     assert_helper_rejects(vec![client_hello(), client_hello()]);
     for message in helper_only_messages() {
@@ -426,7 +458,10 @@ fn heartbeat_responds_on_a_static_session_and_preserves_sequence() {
 fn older_and_newer_helpers_are_explicitly_incompatible_with_version_thirteen() {
     assert_eq!(PROTOCOL_VERSION, 13);
     for version in [9, 10, PROTOCOL_VERSION + 1] {
-        assert_helper_rejects(vec![RdpControlMessage::ClientHello { version }]);
+        assert_helper_rejects(vec![RdpControlMessage::ClientHello {
+            version,
+            frame_update_complete: false,
+        }]);
     }
     assert_helper_rejects(vec![RdpControlMessage::Ping { sequence: 1 }]);
     assert_helper_rejects(vec![
@@ -441,7 +476,13 @@ fn mismatched_client_receives_actual_helper_version_before_exit() {
         let mut child = spawn_helper();
         let mut stdin = child.stdin.take().unwrap();
         let mut stdout = child.stdout.take().unwrap();
-        send(&mut stdin, &RdpControlMessage::ClientHello { version });
+        send(
+            &mut stdin,
+            &RdpControlMessage::ClientHello {
+                version,
+                frame_update_complete: false,
+            },
+        );
         assert_server_hello(recv(&mut stdout));
         drop(stdin);
         assert!(!child.wait().unwrap().success());
