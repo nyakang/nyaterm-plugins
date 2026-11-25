@@ -260,6 +260,10 @@ def main() -> None:
             # Cargo also builds the executable for lifecycle tests. Its optional
             # synthetic endpoint must never overwrite the production package input.
             test_target = Path(environment.get("CARGO_TARGET_DIR", ROOT / "target")) / "android-tests"
+            if "apple" in args.target:
+                # Cargo rewrites dyld's search environment for test executables.
+                # Exercise the helper's packaged @loader_path layout instead.
+                prepare_android.stage_runtime(None, ffmpeg, test_target / args.target / "release")
             command += ["--features", "test-support", "--target-dir", str(test_target)]
         subprocess.run(command, cwd=ROOT, env=environment, check=True)
         return
