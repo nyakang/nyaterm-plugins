@@ -4,7 +4,7 @@ use crate::android::settings::DeviceBinding;
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read, Write};
 
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 pub const MAX_CAPTURE_EDGE: u32 = 2560;
 pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_CONTROL_BYTES: usize = 128 * 1024;
@@ -34,7 +34,7 @@ pub enum Control {
     },
     Connect {
         binding: DeviceBinding,
-        endpoint: std::net::SocketAddr,
+        scid: String,
         settings: AndroidScreenSettings,
     },
     Ready {
