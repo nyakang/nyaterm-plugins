@@ -15,6 +15,21 @@ import prepare_android
 
 
 class ComponentsTests(unittest.TestCase):
+    def test_universal_adb_cannot_hide_a_higher_macos_requirement(self):
+        import struct
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for version in (12, 13):
+                thin = struct.pack("<IiiIIIII", 0xFEEDFACF, 0x1000007, 3, 2, 1, 24, 0, 0)
+                thin += struct.pack("<IIIIII", 0x32, 24, 1, version << 16, 0, 0)
+                fat = struct.pack(">IIiiIII", 0xCAFEBABE, 1, 0x1000007, 3, 28, len(thin), 0) + thin
+                (root / "adb").write_bytes(fat)
+                if version == 12:
+                    verify_binaries(root, "x86_64-apple-darwin", "macos")
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "requires macOS 13"):
+                        verify_binaries(root, "x86_64-apple-darwin", "macos")
+
     def test_android_lifecycle_build_does_not_overwrite_production_helper(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

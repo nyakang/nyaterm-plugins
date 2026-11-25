@@ -194,6 +194,12 @@ def verify_binaries(directory: Path, target: str, runtime: str) -> None:
             cpus = {int.from_bytes(data[8+i*20:12+i*20], "big") for i in range(count)}
             if (0x100000C if arm else 0x1000007) not in cpus:
                 raise ValueError("universal binary is missing the target architecture")
+            for i in range(count):
+                offset = int.from_bytes(data[16+i*20:20+i*20], "big")
+                size = int.from_bytes(data[20+i*20:24+i*20], "big")
+                if offset < 8 + count * 20 or size == 0 or offset + size > len(data):
+                    raise ValueError("invalid universal native slice")
+                verify_macos_minimum_os(data[offset:offset + size])
         elif path.name.endswith(("-helper", "-helper.exe")):
             raise ValueError("component entrypoint is not a native executable")
 
