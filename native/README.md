@@ -33,22 +33,90 @@ its dynamic runtime. Component packaging checks inventory, executable architectu
 macOS deployment version and Linux glibc requirements. Helpers retain decoder panic
 containment and server-facing security policy enforcement.
 
-## Release
+## Release and first deployment
 
-Dispatch Official native components for one component. The six normal targets and
-x64 glibc 2.31 build must succeed. Publication runs on main only, behind the
-native-signing environment. Configure TAURI_SIGNING_PRIVATE_KEY,
-TAURI_SIGNING_PRIVATE_KEY_PASSWORD, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and
-R2_ENDPOINT. The public key must match the application's native component key.
+Native components use the manual **Official native components** workflow. Merging
+main or creating a tag does not publish. The application discovers releases from
+`https://downloads.nyaterm.app/native/v1/index.json`, not GitHub Releases.
 
-Assets use native/v1/<component>/<version>/<target>/<runtime>/component.zip.
-Versions are immutable. Bump only the affected helper version for a new release.
-A signed index envelope is updated only after all asset writes/readbacks succeed;
-ETag compare-and-swap rejects concurrent replacement. Existing signed index entries
-are preserved. R2 publication is separate from NyaTerm application releases.
+Configure the `native-signing` environment with owner review and a deployment
+branch policy restricted to `main`. The workflow uses these secret names:
 
-IPC versions are independent per component. Bump the affected IPC constant on wire
-breaks, publish the protocol commit, then update the application's exact revision.
-Host SemVer bounds describe tested compatibility; they do not replace IPC checks.
-Do not put credentials in logs or diagnostics. Live device/server and macOS/Linux
-acceptance must be performed on their target platforms before release.
+- `TAURI_SIGNING_PRIVATE_KEY_B64`: an outer base64 encoding of the signing key
+  accepted by Tauri's `TAURI_SIGNING_PRIVATE_KEY` environment variable, matching
+  the application's existing release convention.
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: password for that key.
+- `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`: credentials for
+  the existing `nyaterm` bucket served by `downloads.nyaterm.app`.
+
+Repository secrets may supply R2 configuration; keep signing secrets in the
+protected environment. Never paste secrets into issues, logs, or workflow inputs.
+The signing key must match `scripts/release/updater-public-key.txt` and the
+application's native component public key. Preflight signs and verifies a local
+challenge before platform builds; it does not publish objects.
+
+### Routine component update
+
+1. Change the affected helper and run its tests plus packaging tests.
+2. Increment only its `crates/nyaterm-<component>-helper/Cargo.toml` version and
+   update `Cargo.lock`. Merge the reviewed change into main.
+3. Dispatch **Official native components** with `publish=false`, the component
+   and a tested application SemVer range (initial default `>=2.0.8, <3`). All six
+   normal targets and x64 glibc 2.31 must pass. Unsigned build artifacts cannot be
+   imported by production NyaTerm.
+4. Dispatch the same commit from main with `publish=true`. Approve protected
+   environment jobs after reviewing the source and results. The workflow checks
+   configuration, builds, signs and preserves seven packages, then publishes.
+5. Download the publication summary artifact and run:
+
+   ```sh
+   python scripts/release/verify_public.py --component vnc --version 1.0.0
+   ```
+
+For first deployment publish VNC, RDP, SPICE, then Android at `1.0.0`, provided
+those identities have never been published. Run the verifier without `--component`
+to check all 28 archives. The verifier requires minisign. Allow the index's
+60-second CDN cache to expire before checking a just-published release.
+
+### Failures and recovery
+
+The build, signing and publishing jobs are separate. Signed packages are retained
+as `signed-native-<component>` artifacts for 30 days. The publishing job records
+source commits, compatibility, archive hashes, verified object keys and index
+status in `publication-<component>-<attempt>` even when uploading fails.
+
+If only publication fails, **re-run failed jobs**, preserving the signed artifact
+from the successful signing job. Identical previously uploaded bytes are accepted;
+different content at the same version is rejected. Do not rebuild/re-sign that
+version or re-run all jobs after any asset has been uploaded. If the original
+signed artifact is unavailable, increment the helper version. Index conflicts
+require a fresh publication attempt, which reads and verifies the current index.
+Publish components sequentially; the shared index job is serialized.
+
+Assets live at `native/v1/<component>/<version>/<target>/<runtime>/component.zip`.
+They are immutable. The signed index is replaced with an ETag condition only after
+all asset writes/readbacks succeed; previous releases remain in the index. Failed
+publication may leave unreferenced immutable assets but cannot advertise a partial
+platform set. R2 publication is independent of application releases.
+
+### Application installation and compatibility
+
+In NyaTerm's Plugins page, install a native component or import an official signed
+ZIP. First use of an unavailable Android/RDP/VNC/SPICE backend also offers download
+and installation. Check for updates from the component menu, then explicitly apply
+the available update; no background automatic replacement occurs. The menu also
+supports rollback, disable and uninstall. An update leaves existing sessions on
+their leased version; new sessions use the new selection. Compatible installations
+survive application upgrades. Windows Native RDP remains application-owned.
+
+Helper versions are independent of application versions. Selection checks host
+SemVer bounds, target/runtime and the component's IPC version. Bump the affected
+IPC constant on incompatible wire changes, publish that protocol commit, then
+update the application's exact Git revision. Decoder fixes with unchanged contracts
+do not require an application release. The first rollout requires users to install
+a NyaTerm build containing the independent-component client.
+
+Validate download/install/launch using an isolated application data directory.
+Exercise updates and rollback with controlled test versions, not fake production
+releases. Real Android and remote-server sessions and Linux/macOS runtime checks
+remain separate acceptance steps; record unavailable devices/platforms explicitly.

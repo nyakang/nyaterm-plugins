@@ -77,3 +77,53 @@ class PublicationTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError): store.put(publish.INDEX_KEY, source, previous='"old"')
                 self.assertIn("--if-match", call.call_args.args)
                 self.assertNotIn("--if-none-match", call.call_args.args)
+
+    def test_immutable_retry_accepts_only_identical_signed_bytes(self):
+        with mock.patch.dict(publish.os.environ, {"R2_ENDPOINT": "https://abc.r2.cloudflarestorage.com"}):
+            store = publish.R2()
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "component.zip"
+            source.write_bytes(b"signed original")
+            for existing in (b"signed original", b"different signature"):
+                def fetch(key, destination):
+                    destination.write_bytes(existing)
+                    return '"etag"'
+                with mock.patch.object(store, "call", return_value=mock.Mock(returncode=1)) as call, mock.patch.object(store, "fetch", side_effect=fetch):
+                    if existing == source.read_bytes():
+                        store.put("asset", source, immutable=True)
+                    else:
+                        with self.assertRaises(RuntimeError): store.put("asset", source, immutable=True)
+                    self.assertIn("--if-none-match", call.call_args.args)
+
+    def test_retry_after_partial_upload_preserves_previous_component(self):
+        objects = {}
+        failed = False
+        class ResumableStore:
+            def fetch(self, key, destination):
+                if key not in objects: return None
+                destination.write_bytes(objects[key])
+                return '"etag"'
+            def put(self, key, source, **options):
+                nonlocal failed
+                if key == "vnc/second" and not failed:
+                    failed = True
+                    raise RuntimeError("interrupted upload")
+                if options.get("immutable") and key in objects:
+                    if objects[key] != source.read_bytes(): raise RuntimeError("conflict")
+                objects[key] = source.read_bytes()
+        previous = dict(component="rdp", version="1.0.0", target="x", runtime="y")
+        objects[publish.INDEX_KEY] = json.dumps(dict(index=json.dumps(dict(schema_version=1, releases=[previous])), signature="old")).encode()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name in ("first", "second"): (root / (name + ".zip")).write_bytes(name.encode())
+            def record(path):
+                return 'vnc/' + path.stem, dict(component="vnc", version="1.0.0", target=path.stem, runtime="y")
+            with mock.patch.object(publish, "release_record", side_effect=record), mock.patch.object(publish, "verify_signature"), mock.patch.object(publish, "sign_bytes", return_value="signed"):
+                before = objects[publish.INDEX_KEY]
+                with self.assertRaises(RuntimeError): publish.publish(root, ResumableStore())
+                self.assertEqual(objects[publish.INDEX_KEY], before)
+                self.assertEqual(objects["vnc/first"], b"first")
+                publish.publish(root, ResumableStore())
+                after = json.loads(json.loads(objects[publish.INDEX_KEY])["index"])
+                self.assertEqual(len(after["releases"]), 3)
+                self.assertIn(previous, after["releases"])

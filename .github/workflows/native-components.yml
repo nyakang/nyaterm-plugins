@@ -6,7 +6,7 @@ on:
         type: choice
         options: [android, rdp, vnc, spice]
         required: true
-      publish:
+      sign:
         type: boolean
         default: false
       host_version:
@@ -17,14 +17,37 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: native-component-publication
+  group: native-component-${{ inputs.component }}-${{ github.ref }}
   cancel-in-progress: false
 defaults:
   run:
     working-directory: native
 
 jobs:
+  preflight:
+    if: inputs.publish
+    runs-on: ubuntu-22.04
+    environment: native-signing
+    env:
+      TAURI_SIGNING_PRIVATE_KEY_B64: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_B64 }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: python scripts/release/preflight.py configuration
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: sudo apt-get update && sudo apt-get install -y minisign
+      - run: python scripts/release/preflight.py signing
+
   build:
+    needs: preflight
+    if: ${{ !cancelled() && (needs.preflight.result == 'success' || needs.preflight.result == 'skipped') }}
     strategy:
       fail-fast: false
       matrix:
@@ -114,6 +137,8 @@ jobs:
           if-no-files-found: error
 
   focal:
+    needs: preflight
+    if: ${{ !cancelled() && (needs.preflight.result == 'success' || needs.preflight.result == 'skipped') }}
     runs-on: ubuntu-22.04
     timeout-minutes: 120
     env:
@@ -132,7 +157,7 @@ jobs:
           path: native/dist/*.zip
           if-no-files-found: error
 
-  publish:
+  sign:
     if: inputs.publish && github.ref == 'refs/heads/main'
     needs: [build, focal]
     runs-on: ubuntu-22.04
@@ -152,7 +177,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y minisign
       - name: Sign all reviewed platform packages
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_B64: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_B64 }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           python - <<'PY'
@@ -164,17 +189,56 @@ jobs:
           manifests = [inspect(package)[0] for package in packages]
           if len(manifests) != 7 or {(m['target'], m['runtime']) for m in manifests} != PLATFORMS:
               raise SystemExit('incomplete component platform matrix')
+          if any(m['build_id'] != __import__('os').environ['GITHUB_SHA'] for m in manifests):
+              raise SystemExit('component source revision mismatch')
           if len({(m['component'], m['component_version']) for m in manifests}) != 1:
               raise SystemExit('inconsistent component identity')
           for package in packages: sign_package(package)
           PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-native-${{ inputs.component }}
+          path: native/dist/*.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    if: inputs.publish && github.ref == 'refs/heads/main'
+    needs: sign
+    runs-on: ubuntu-22.04
+    environment: native-signing
+    concurrency:
+      group: native-index-publication
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - uses: actions/download-artifact@v4
+        with:
+          name: signed-native-${{ inputs.component }}
+          path: native/dist
+      - name: Prepare publishing tools
+        run: |
+          sudo apt-get update && sudo apt-get install -y minisign
+          python -m pip install 'awscli>=1.40,<2'
+          python scripts/release/preflight.py tools
       - name: Publish immutable assets and signed index
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
-          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
           R2_BUCKET: nyaterm
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_B64: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_B64 }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: python scripts/release/publish.py --directory dist
+        run: python scripts/release/publish.py --directory dist --report publication.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: publication-${{ inputs.component }}-${{ github.run_attempt }}
+          path: native/publication.json
+          if-no-files-found: warn

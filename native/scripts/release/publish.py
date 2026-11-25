@@ -75,11 +75,15 @@ def merge(index, releases):
     return {"schema_version": 1, "releases": [entries[key] for key in sorted(entries)]}
 
 
-def publish(directory: Path, store):
+def publish(directory: Path, store, report=None):
     packages = sorted(directory.rglob("*.zip"))
     if not packages:
         raise ValueError("no component packages")
     records = [(path, *release_record(path)) for path in packages]
+    if report is not None:
+        report["releases"] = [dict(record, build_id=inspect(package)[0]["build_id"])
+                              for package, _, record in records]
+        report["verified_assets"] = []
     with tempfile.TemporaryDirectory(prefix="native-index-") as temporary:
         path = Path(temporary) / "index.json"
         previous = store.fetch(INDEX_KEY, path)
@@ -98,11 +102,23 @@ def publish(directory: Path, store):
             raise ValueError("native index size limit")
         for package, key, _ in records:
             store.put(key, package, immutable=True)
+            if report is not None:
+                report["verified_assets"].append(key)
         path.write_text(envelope, encoding="utf-8")
         store.put(INDEX_KEY, path, previous=previous)
+        if report is not None:
+            report["index_sha256"] = digest(path.read_bytes())
+            report["status"] = "published"
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--directory", type=Path, required=True)
-    publish(parser.parse_args().directory, R2())
+    parser.add_argument("--report", type=Path)
+    args = parser.parse_args()
+    report = {"status": "failed", "index_key": INDEX_KEY}
+    try:
+        publish(args.directory, R2(), report)
+    finally:
+        if args.report:
+            args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

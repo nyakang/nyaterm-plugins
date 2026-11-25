@@ -119,11 +119,17 @@ def inspect(path: Path) -> tuple[dict, dict[str, bytes]]:
 
 
 def sign_bytes(raw: bytes) -> str:
+    env = os.environ.copy()
+    if encoded := env.pop("TAURI_SIGNING_PRIVATE_KEY_B64", None):
+        try:
+            env["TAURI_SIGNING_PRIVATE_KEY"] = base64.b64decode(encoded, validate=True).decode()
+        except (ValueError, UnicodeError):
+            raise ValueError("Invalid signing key encoding") from None
     with tempfile.TemporaryDirectory(prefix="native-sign-") as temporary:
         path = Path(temporary) / "payload"
         path.write_bytes(raw)
         result = subprocess.run(["npx", "--yes", "@tauri-apps/cli@2.10.0", "signer", "sign", "--password",
-                                 os.environ["TAURI_SIGNING_PRIVATE_KEY_PASSWORD"], str(path)], capture_output=True)
+                                 env["TAURI_SIGNING_PRIVATE_KEY_PASSWORD"], str(path)], capture_output=True, env=env)
         if result.returncode:
             raise RuntimeError("Native signing failed; signer diagnostics withheld")
         return base64.b64decode(path.with_suffix(".sig").read_bytes().strip(), validate=True).decode()
