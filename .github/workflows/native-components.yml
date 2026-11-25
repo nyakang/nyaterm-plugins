@@ -93,8 +93,10 @@ jobs:
       - name: Validate contracts and packaging
         run: |
           cargo fmt --all -- --check
-          cargo test --locked -p nyaterm-native-protocol
           python -m unittest discover -s scripts/tests
+      - name: Test protocol on executable targets
+        if: matrix.execute
+        run: cargo test --locked -p nyaterm-native-protocol --target "${{ matrix.target }}"
       - name: Build and check selected component
         run: |
           python scripts/release/components.py build --component "${{ inputs.component }}" --target "${{ matrix.target }}"
