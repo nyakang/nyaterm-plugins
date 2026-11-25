@@ -6,7 +6,7 @@ on:
         type: choice
         options: [android, rdp, vnc, spice]
         required: true
-      sign:
+      publish:
         type: boolean
         default: false
       host_version:
