@@ -232,6 +232,33 @@ class SpiceRuntimeTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "requires macOS 13"):
                     prepare_spice.verify_runtime(root, target)
 
+    def test_runtime_allows_system_ancestor_links_but_rejects_payload_links(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            real = base / "real"
+            real.mkdir()
+            alias = base / "alias"
+            try:
+                alias.symlink_to(real, target_is_directory=True)
+            except OSError:
+                self.skipTest("directory symlink creation unavailable")
+            root = alias / "runtime"
+            root.mkdir()
+            target = "x86_64-unknown-linux-gnu"
+            payload = root / "library.so"
+            payload.write_bytes(b"fixture")
+            manifest = {"schema": 1, "target": target,
+                        "sources_sha256": prepare_spice.sha256(prepare_spice.SOURCES_PATH.read_bytes()),
+                        "files": {"library.so": prepare_spice.sha256(b"fixture")}}
+            (root / "SOURCE.json").write_text(json.dumps(manifest), encoding="utf-8")
+            prepare_spice.verify_runtime(root, target)
+            outside = base / "outside.so"
+            outside.write_bytes(b"fixture")
+            payload.unlink()
+            payload.symlink_to(outside)
+            with self.assertRaisesRegex(ValueError, "missing or modified"):
+                prepare_spice.verify_runtime(root, target)
+
     def test_unix_source_and_submodules_have_immutable_revisions(self):
         metadata = json.loads(prepare_spice.SOURCES_PATH.read_text(encoding="utf-8"))["unix_git"]
         for item in [metadata, *metadata["submodules"].values()]:

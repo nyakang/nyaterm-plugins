@@ -213,7 +213,10 @@ def verify_runtime(directory: Path, target: str) -> dict:
     for name, digest in manifest["files"].items():
         safe_relative(name)
         path = directory / name
-        if (any(p.is_symlink() for p in [path, *path.parents] if p != directory.parent)
+        # Reject links inside the runtime, including its root, without rejecting
+        # system ancestors such as macOS /var -> /private/var.
+        relative = Path(name)
+        if (any((directory / part).is_symlink() for part in [relative, *relative.parents])
                 or not path.is_file() or sha256(path.read_bytes()) != digest):
             raise ValueError("SPICE runtime missing or modified file: " + name)
         if (target.endswith("apple-darwin") and not name.startswith("licenses/")
