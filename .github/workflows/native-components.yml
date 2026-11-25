@@ -1,0 +1,178 @@
+name: Official native components
+on:
+  workflow_dispatch:
+    inputs:
+      component:
+        type: choice
+        options: [android, rdp, vnc, spice]
+        required: true
+      publish:
+        type: boolean
+        default: false
+      host_version:
+        description: Compatible NyaTerm SemVer requirement
+        default: '>=2.0.8, <3'
+        required: true
+
+permissions:
+  contents: read
+concurrency:
+  group: native-component-publication
+  cancel-in-progress: false
+defaults:
+  run:
+    working-directory: native
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-2025, target: x86_64-pc-windows-msvc, runtime: windows-msvc, arch: x64, execute: true }
+          - { os: windows-2025, target: aarch64-pc-windows-msvc, runtime: windows-msvc, arch: amd64_arm64, execute: false }
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, runtime: glibc-2.35, execute: true }
+          - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu, runtime: glibc-2.35, execute: true }
+          - { os: macos-15, target: aarch64-apple-darwin, runtime: macos, execute: true }
+          - { os: macos-15-intel, target: x86_64-apple-darwin, runtime: macos, execute: true }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    env:
+      COMPONENT: ${{ inputs.component }}
+      TARGET: ${{ matrix.target }}
+      RUNTIME: ${{ matrix.runtime }}
+      HOST_VERSION: ${{ inputs.host_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.1
+          targets: ${{ matrix.target }}
+          components: rustfmt, clippy
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+        with: { arch: '${{ matrix.arch }}' }
+      - uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows' && inputs.component == 'android'
+        with: { msystem: MSYS, path-type: inherit, install: make }
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config clang libclang-dev cmake ninja-build nasm libasound2-dev libssl-dev libx11-dev libxfixes-dev libxrandr-dev libxi-dev libxkbcommon-dev libwayland-dev libdbus-1-dev libgtest-dev libprotobuf-dev protobuf-compiler libusb-1.0-0-dev zlib1g-dev libbrotli-dev liblz4-dev libpcre2-dev libzstd-dev
+      - name: Install macOS tools
+        if: runner.os == 'macOS'
+        run: brew install pkg-config
+      - name: Install Windows LLVM
+        if: runner.os == 'Windows' && inputs.component == 'android'
+        run: choco install llvm -y --no-progress
+      - name: Prepare Windows FFmpeg with MSYS paths
+        if: runner.os == 'Windows' && inputs.component == 'android'
+        shell: msys2 {0}
+        run: python scripts/release/prepare_android.py --target "$TARGET"
+      - name: Prepare Android resources
+        if: inputs.component == 'android'
+        shell: bash
+        run: |
+          python scripts/release/prepare_android.py --target "$TARGET"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write(f'FFMPEG_DIR={(Path("target/android-deps/ffmpeg") / os.environ["TARGET"]).resolve()}\n')
+          PY
+      - name: Prepare SPICE tools
+        if: inputs.component == 'spice'
+        shell: bash
+        run: |
+          python -m pip install pefile==2024.8.26 zstandard==0.25.0 pyparsing==3.2.5
+          if [ "$RUNNER_OS" != Windows ]; then bash scripts/ci/install-spice-deps.sh; fi
+      - name: Validate contracts and packaging
+        run: |
+          cargo fmt --all -- --check
+          cargo test --locked -p nyaterm-native-protocol
+          python -m unittest discover -s scripts/tests
+      - name: Build and check selected component
+        run: |
+          python scripts/release/components.py build --component "${{ inputs.component }}" --target "${{ matrix.target }}"
+          cargo clippy --locked --target "${{ matrix.target }}" -p "nyaterm-${{ inputs.component }}-helper" --all-targets
+      - name: Test selected component
+        if: matrix.execute
+        run: python scripts/release/components.py test --component "${{ inputs.component }}" --target "${{ matrix.target }}"
+      - name: Package component
+        shell: bash
+        run: python scripts/release/components.py package --component "$COMPONENT" --target "$TARGET" --runtime "$RUNTIME" --host-version "$HOST_VERSION" --archive "dist/$COMPONENT-$TARGET-$RUNTIME.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ inputs.component }}-${{ matrix.target }}
+          path: native/dist/*.zip
+          if-no-files-found: error
+
+  focal:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    env:
+      COMPONENT: ${{ inputs.component }}
+      HOST_VERSION: ${{ inputs.host_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - name: Build glibc 2.31 component
+        run: |
+          docker build --build-arg RUST_VERSION=1.99.1 -t native-focal scripts/compat/linux-focal
+          docker run --rm -e COMPONENT -e HOST_VERSION -v "$PWD:/src" -w /src native-focal bash scripts/compat/linux-focal/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ inputs.component }}-glibc231
+          path: native/dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    if: inputs.publish && github.ref == 'refs/heads/main'
+    needs: [build, focal]
+    runs-on: ubuntu-22.04
+    environment: native-signing
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-${{ inputs.component }}-*
+          path: native/dist
+          merge-multiple: true
+      - run: sudo apt-get update && sudo apt-get install -y minisign
+      - name: Sign all reviewed platform packages
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          python - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, 'scripts/release')
+          from components import sign_package, inspect, PLATFORMS
+          packages = sorted(Path('dist').glob('*.zip'))
+          manifests = [inspect(package)[0] for package in packages]
+          if len(manifests) != 7 or {(m['target'], m['runtime']) for m in manifests} != PLATFORMS:
+              raise SystemExit('incomplete component platform matrix')
+          if len({(m['component'], m['component_version']) for m in manifests}) != 1:
+              raise SystemExit('inconsistent component identity')
+          for package in packages: sign_package(package)
+          PY
+      - name: Publish immutable assets and signed index
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET: nyaterm
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: python scripts/release/publish.py --directory dist

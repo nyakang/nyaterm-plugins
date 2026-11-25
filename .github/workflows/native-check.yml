@@ -1,0 +1,28 @@
+name: Native contract and tooling
+on:
+  pull_request:
+    paths: ['native/**', '.github/workflows/native-*.yml']
+  push:
+    branches: [main, feat/native-components]
+    paths: ['native/**', '.github/workflows/native-*.yml']
+permissions:
+  contents: read
+jobs:
+  contract:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: native
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.1
+          components: rustfmt, clippy
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: cargo fmt --all -- --check
+      - run: cargo test --locked -p nyaterm-native-protocol -p nyaterm-vnc-helper
+      - run: cargo clippy --locked -p nyaterm-native-protocol -p nyaterm-vnc-helper --all-targets
+      - run: python -m unittest discover -s scripts/tests

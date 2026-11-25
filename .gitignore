@@ -5,3 +5,6 @@ work/
 *.pem
 *.key
 .env*
+
+__pycache__/
+native/dist/

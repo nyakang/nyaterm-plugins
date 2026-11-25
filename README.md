@@ -32,3 +32,7 @@ The protected `plugin-signing` environment requires a Minisign private key in `N
 The workflow checks out only the reviewed inspector revision, downloads the already-reviewed candidate, signs its exact bytes, uploads immutable assets and opens a catalog PR. It never compiles candidate source or executes guest code. The ZIP digest does not change after signing. No illustrative candidate or unsigned example is published in the catalog.
 
 See CONTRIBUTING.md for records and SECURITY.md for trust and revocation boundaries.
+
+## Official native components
+
+The independent Rust workspace in [native/](native/README.md) owns Android, RDP, VNC and SPICE helpers, their shared IPC contract and native release tooling. Its signed R2 index is separate from the Wasm extension catalog.

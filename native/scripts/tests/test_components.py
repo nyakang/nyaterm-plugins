@@ -1,0 +1,74 @@
+import importlib.util
+import json
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+import zipfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "release"))
+from components import inspect, write_package, verify_binaries
+from publish import merge
+
+
+class ComponentsTests(unittest.TestCase):
+    def test_independent_version_inventory_round_trip_and_tamper_rejection(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = root / "payload"
+            payload.mkdir()
+            (payload / "nyaterm-vnc-helper.exe").write_bytes(b"controlled helper fixture")
+            archive = root / "component.zip"
+            write_package(payload, archive, "vnc", "1.2.3", ">=2.0.8, <3", "x86_64-pc-windows-msvc", "windows-msvc", "a" * 40)
+            manifest, files = inspect(archive)
+            self.assertEqual(manifest["component_version"], "1.2.3")
+            self.assertNotIn("app_version", manifest)
+            with zipfile.ZipFile(archive, "w") as output:
+                for name, data in files.items():
+                    output.writestr(name, b"changed" if name.endswith(".exe") else data)
+            with self.assertRaises(ValueError):
+                inspect(archive)
+
+    def test_architecture_gate_allows_only_bundled_x86_adb_exception(self):
+        import struct
+        def pe(machine):
+            data = bytearray(128)
+            data[:2] = b"MZ"
+            struct.pack_into("<I", data, 0x3C, 64)
+            data[64:68] = b"PE\0\0"
+            struct.pack_into("<H", data, 68, machine)
+            return data
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            helper = root / "nyaterm-android-helper.exe"
+            helper.write_bytes(pe(0x8664))
+            (root / "adb").mkdir()
+            (root / "adb/adb.exe").write_bytes(pe(0x14C))
+            verify_binaries(root, "x86_64-pc-windows-msvc", "windows-msvc")
+            helper.write_bytes(pe(0x14C))
+            with self.assertRaises(ValueError): verify_binaries(root, "x86_64-pc-windows-msvc", "windows-msvc")
+
+    def test_release_identity_cannot_be_overwritten_and_runtimes_remain_distinct(self):
+        first = dict(component="vnc", version="1.0.0", target="x86_64-unknown-linux-gnu", runtime="glibc-2.35", sha256="a" * 64)
+        index = merge(dict(schema_version=1, releases=[]), [first])
+        self.assertEqual(merge(index, [first]), index)
+        with self.assertRaises(ValueError):
+            merge(index, [{**first, "sha256": "b" * 64}])
+        self.assertEqual(len(merge(index, [{**first, "runtime": "glibc-2.31"}])["releases"]), 2)
+
+    def test_archive_rejects_duplicate_names_and_extra_payload(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = root / "payload"
+            payload.mkdir()
+            (payload / "nyaterm-vnc-helper.exe").write_bytes(b"fixture")
+            archive = root / "component.zip"
+            write_package(payload, archive, "vnc", "1.0.0", ">=2.0.8, <3", "x86_64-pc-windows-msvc", "windows-msvc", "a" * 40)
+            with zipfile.ZipFile(archive, "a") as output:
+                output.writestr("injected.dll", b"unlisted")
+            with self.assertRaises(ValueError):
+                inspect(archive)
+
+
+if __name__ == "__main__":
+    unittest.main()
