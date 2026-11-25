@@ -150,7 +150,7 @@ jobs:
       - name: Build glibc 2.31 component
         run: |
           docker build --build-arg RUST_VERSION=1.99.1 -t native-focal scripts/compat/linux-focal
-          docker run --rm -e COMPONENT -e HOST_VERSION -v "$PWD:/src" -w /src native-focal bash scripts/compat/linux-focal/build.sh
+          docker run --rm -e COMPONENT -e HOST_VERSION -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/src -v "$GITHUB_WORKSPACE:/src" -w /src/native native-focal bash scripts/compat/linux-focal/build.sh
       - uses: actions/upload-artifact@v4
         with:
           name: native-${{ inputs.component }}-glibc231

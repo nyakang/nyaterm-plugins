@@ -240,7 +240,9 @@ def main() -> None:
     if args.operation == "test":
         environment = os.environ.copy()
         if args.component == "android":
-            ffmpeg = Path(environment["FFMPEG_DIR"])
+            import prepare_android
+            _, ffmpeg = prepare_android.prepare(args.target)
+            environment["FFMPEG_DIR"] = str(ffmpeg)
             environment["PATH"] = str(ffmpeg / "bin") + os.pathsep + environment.get("PATH", "")
             environment["LD_LIBRARY_PATH"] = str(ffmpeg / "lib") + os.pathsep + environment.get("LD_LIBRARY_PATH", "")
         command = ["cargo", "test", "--locked", "--release", "--target", args.target, "-p", f"nyaterm-{args.component}-helper"]

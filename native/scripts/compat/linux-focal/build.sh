@@ -9,4 +9,6 @@ export NYATERM_SPICE_DEPS_DIR="$CARGO_TARGET_DIR/spice-deps"
 export CARGO_BUILD_JOBS=4
 target=x86_64-unknown-linux-gnu
 python3 scripts/release/components.py build --component "$COMPONENT" --target "$target"
+cargo test --locked --release -p nyaterm-native-protocol --target "$target"
+python3 scripts/release/components.py test --component "$COMPONENT" --target "$target"
 python3 scripts/release/components.py package --component "$COMPONENT" --target "$target" --runtime glibc-2.31 --host-version "$HOST_VERSION" --archive "dist/$COMPONENT-$target-glibc-2.31.zip"
