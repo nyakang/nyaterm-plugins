@@ -1,4 +1,4 @@
-name: Validate Store
+name: Validate extension store v2
 on:
   pull_request:
   push:
@@ -14,26 +14,34 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      - name: Test extension records and catalog generation
-        run: npm test
-      - name: Check records and public catalog drift
-        run: npm run validate
-      # Do not execute code from candidate repositories or from a PR-selected platform ref.
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - run: npm run validate
+      - name: Check reviewed validator revision
+        if: vars.NYATERM_VALIDATOR_REF != ''
+        env:
+          VALIDATOR_REF: ${{ vars.NYATERM_VALIDATOR_REF }}
+        run: test "${#VALIDATOR_REF}" -eq 40 && [[ "$VALIDATOR_REF" =~ ^[0-9a-f]+$ ]]
       - uses: actions/checkout@v4
+        if: vars.NYATERM_VALIDATOR_REF != ''
         with:
           repository: nyakang/nyaterm
-          ref: 8debbfbc9f24dbe556e94fb91451ce2dacfa9aa0
+          ref: ${{ vars.NYATERM_VALIDATOR_REF }}
           path: work/platform
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@1.94.0
-      - run: cargo build --locked --manifest-path work/platform/src-tauri/crates/nyaterm-plugin-runtime/Cargo.toml --bin nyaterm-plugin
-      - name: Test real packaging and selective submission signing
-        run: npm test
+      - uses: dtolnay/rust-toolchain@master
+        if: vars.NYATERM_VALIDATOR_REF != ''
+        with:
+          toolchain: 1.99.1
+      - name: Build reviewed inspector
+        if: vars.NYATERM_VALIDATOR_REF != ''
+        run: cargo build --locked --manifest-path work/platform/Cargo.toml -p nyaterm-plugin-host --bin nyaterm-plugin-tool
+      - name: Cross-repository contract and package validation
+        if: vars.NYATERM_VALIDATOR_REF != ''
         env:
-          NYATERM_PLUGIN_CLI: ${{ github.workspace }}/work/platform/src-tauri/crates/nyaterm-plugin-runtime/target/debug/nyaterm-plugin
-      - name: Inspect submitted and published packages
-        run: npm run validate -- --packages
-        env:
-          NYATERM_PLUGIN_CLI: ${{ github.workspace }}/work/platform/src-tauri/crates/nyaterm-plugin-runtime/target/debug/nyaterm-plugin
-          NYATERM_APP_VERSION: 1.2.12
+          NYATERM_PLUGIN_CLI: ${{ github.workspace }}/work/platform/target/debug/nyaterm-plugin-tool
+          NYATERM_EXTENSION_PUBLIC_KEY: ${{ vars.NYATERM_EXTENSION_PUBLIC_KEY }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y minisign
+          npm test
+          npm run validate -- --packages

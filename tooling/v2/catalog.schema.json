@@ -1,0 +1,127 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "NyaTerm extension catalog v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "catalog_version",
+    "extensions"
+  ],
+  "properties": {
+    "catalog_version": {
+      "const": 2
+    },
+    "extensions": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "description",
+          "publisher",
+          "releases"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,95}$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "publisher": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,95}$"
+          },
+          "releases": {
+            "type": "array",
+            "maxItems": 128,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "version",
+                "host_version",
+                "api_version",
+                "capabilities",
+                "artifact"
+              ],
+              "properties": {
+                "version": {
+                  "type": "string"
+                },
+                "host_version": {
+                  "type": "string"
+                },
+                "api_version": {
+                  "const": "2.0.0"
+                },
+                "capabilities": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": [
+                      "network",
+                      "local_files_read",
+                      "local_files_write",
+                      "remote_files_read",
+                      "remote_files_write",
+                      "sessions_read",
+                      "terminal_read",
+                      "terminal_write",
+                      "remote_execute",
+                      "process_execute",
+                      "storage",
+                      "ui"
+                    ]
+                  }
+                },
+                "artifact": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "url",
+                    "sha256",
+                    "size",
+                    "signature"
+                  ],
+                  "properties": {
+                    "url": {
+                      "type": "string",
+                      "format": "uri",
+                      "pattern": "^https://",
+                      "maxLength": 4096
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "size": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 67108864
+                    },
+                    "signature": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 8192
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

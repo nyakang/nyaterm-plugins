@@ -1,9 +1,13 @@
 # Security policy
 
-Report suspected compromised releases or signing keys privately through GitHub's security advisory reporting for this repository. Never include private signing material in issues, PRs, logs, or attachments.
+Report compromised artifacts or keys through this repository's private security advisory process. Never include private key material or user data in public reports.
 
-Repository Ed25519 signatures authenticate reviewed content, not an author's identity or the safety of native code. `verified` publisher metadata is not a cryptographic trust mechanism. Native plugins run with OS user privileges; users must separately review and authorize runtime permissions.
+V2 uses Minisign signatures over complete ZIP bytes. The client independently checks digest, size, API, ID, publisher, version, host requirement and capabilities. A separate extension-store key cannot authorize official native helper packages. Publisher display metadata alone does not establish trust. Store validation must use a pinned reviewed Rust inspector and must never execute candidate code.
 
-Private keys belong only in the protected `plugin-signing` Environment secret `NYATERM_STORE_SIGNING_KEY`, with maintainer approval and `main` deployment restrictions. PR validation has no signing secrets and never executes plugin source or binaries. Candidate URLs, hashes, manifests and permissions must be approved on `main` before signing. Do not use `pull_request_target` to run submitted Store code.
+Private signing material belongs in the protected `plugin-signing` environment. Require maintainer approval and restrict signing to main. PR jobs have no signing secrets. Do not run contributed tooling with secrets through `pull_request_target`.
 
-For rotation, ship the new pinned public key in NyaTerm alongside the old one before switching Store signing. Trusted rotation within the same repository/publisher preserves provenance. Switching repositories or local/Store sources requires uninstalling first. For compromise, revoke the key/hash in `trust/revoked.json`, remove affected artifacts from the extension release records, regenerate the catalog, and release a client that removes compromised pinned keys. Existing installations need incident-specific remediation; v1 does not remotely disable them.
+The client persists signed receipts and rechecks their signatures and code identity at activation. Existing resource grants follow the same key/publisher/plugin across authenticated updates. New capabilities and resource scopes require authorization. Local builds use a content identity, so changing code resets grants. Revoking a plugin clears all its previously authorized builds.
+
+`trust/revoked.json` blocks revoked artifact hashes from signing and catalog generation. Remove affected releases, regenerate the catalog and ship an updated client key for a compromised key. This repository does not remotely disable already installed extensions; remediation of installed copies requires a client update or local disable/uninstall. Key rotation currently requires a client release and renewed grants for the new key.
+
+Wasm extensions access resources through declared, scoped host APIs. Authorized local executables run with the user's OS privileges and must be reviewed accordingly. Official protocol helpers remain isolated child processes. Private plugin storage is ordinary local data, not an encrypted credential vault.

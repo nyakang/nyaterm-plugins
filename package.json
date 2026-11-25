@@ -6,9 +6,10 @@
     "node": ">=22"
   },
   "scripts": {
-    "validate": "node tooling/commands/validate.mjs",
-    "catalog": "node tooling/commands/generate-catalog.mjs",
-    "test": "node --test tooling/tests/*.test.mjs"
+    "validate": "node tooling/v2/cli.mjs validate",
+    "catalog": "node tooling/v2/cli.mjs catalog",
+    "test": "node --test tooling/v2/*.test.mjs",
+    "inspect": "node tooling/v2/cli.mjs inspect"
   },
   "dependencies": {
     "ajv": "^8.17.1",
