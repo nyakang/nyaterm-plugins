@@ -1,6 +1,10 @@
 node_modules/
+native/target/
 work/
 *.nyap
 *.pem
 *.key
 .env*
+
+__pycache__/
+native/dist/

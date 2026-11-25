@@ -1,0 +1,62 @@
+name: Native contract and tooling
+on:
+  pull_request:
+    paths: ['native/**', '.github/workflows/native-*.yml']
+  push:
+    branches: [main, feat/native-components]
+    paths: ['native/**', '.github/workflows/native-*.yml']
+permissions:
+  contents: read
+jobs:
+  contract:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: native
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.1
+          components: rustfmt, clippy
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: cargo fmt --all -- --check
+      - run: cargo test --locked -p nyaterm-native-protocol -p nyaterm-vnc-helper
+      - run: cargo clippy --locked -p nyaterm-native-protocol -p nyaterm-vnc-helper --all-targets
+      - run: python -m unittest discover -s scripts/tests
+
+  helpers:
+    runs-on: windows-2025
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: native
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.1
+          components: clippy
+      - uses: ilammy/msvc-dev-cmd@v1
+        with: { arch: x64 }
+      - uses: msys2/setup-msys2@v2
+        with: { msystem: MSYS, path-type: inherit, install: make }
+      - run: choco install llvm -y --no-progress
+      - name: Prepare FFmpeg and Android runtime
+        shell: msys2 {0}
+        run: python scripts/release/prepare_android.py --target x86_64-pc-windows-msvc
+      - name: Test all independent helpers
+        shell: pwsh
+        run: |
+          $env:FFMPEG_DIR = (Resolve-Path target/android-deps/ffmpeg/x86_64-pc-windows-msvc).Path
+          $env:PATH = "$env:FFMPEG_DIR/bin;$env:PATH"
+          cargo test --locked --workspace --all-targets --features nyaterm-android-helper/test-support
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo clippy --locked --workspace --all-targets
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s scripts/tests

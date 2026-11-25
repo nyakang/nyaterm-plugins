@@ -1,0 +1,18 @@
+[package]
+name = "nyaterm-android-helper"
+version = "1.0.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+test-support = []
+
+[dependencies]
+nyaterm-native-protocol = { path = "../nyaterm-native-protocol" }
+# 8.1.0's codec/scaling modules import format unconditionally. Its native
+# demuxers, protocols and network are disabled in the pinned FFmpeg build.
+ffmpeg-next = { version = "=8.1.0", default-features = false, features = ["codec", "software-scaling", "format"] }
+
+tempfile.workspace = true
