@@ -18,6 +18,27 @@ import native_headers
 
 
 class SpiceRuntimeTests(unittest.TestCase):
+    def test_macos_bare_dependency_resolves_from_private_prefix(self):
+        with tempfile.TemporaryDirectory() as directory:
+            prefix = Path(directory).resolve()
+            dependency = prefix / "lib/libvpx.12.dylib"
+            dependency.parent.mkdir()
+            dependency.write_bytes(b"fixture")
+            plugin = prefix / "lib/gstreamer-1.0/libgstvpx.dylib"
+            with mock.patch.object(spice_unix, "output", side_effect=[
+                "plugin:\n\tlibvpx.12.dylib (compatibility version 12.0.0)", "plugin:"]):
+                self.assertEqual(spice_unix.macho_dependencies(plugin, prefix),
+                                 [("libvpx.12.dylib", dependency)])
+
+    def test_macos_bare_dependency_does_not_fall_back_outside_prefix(self):
+        with tempfile.TemporaryDirectory() as directory:
+            prefix = Path(directory).resolve()
+            for reference in ("libvpx.12.dylib", "../libvpx.12.dylib"):
+                with self.subTest(reference=reference), mock.patch.object(spice_unix, "output", side_effect=[
+                    f"plugin:\n\t{reference} (compatibility version 12.0.0)", "plugin:"]):
+                    with self.assertRaisesRegex(ValueError, "Unresolved SPICE Mach-O dependency"):
+                        spice_unix.macho_dependencies(prefix / "plugin.dylib", prefix)
+
     def test_macos_vpx_configure_uses_environment_for_linker_deployment_floor(self):
         for arch, target in (("arm64", "arm64-darwin20-gcc"),
                              ("x86_64", "x86_64-darwin20-gcc")):

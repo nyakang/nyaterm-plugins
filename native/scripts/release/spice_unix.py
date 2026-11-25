@@ -227,7 +227,7 @@ def elf_dependencies(path, prefix=None):
     return [(name, resolved[name]) for name in needed if name not in SYSTEM_ELF]
 
 
-def macho_dependencies(path):
+def macho_dependencies(path, prefix=None):
     lines = output(["otool", "-L", path]).splitlines()[1:]
     identity = output(["otool", "-D", path]).splitlines()[1:]
     dependencies = []
@@ -246,6 +246,10 @@ def macho_dependencies(path):
             resolved = next((p for p in candidates if p.is_file()), None)
             if resolved is None:
                 raise ValueError("Unresolved SPICE Mach-O rpath: " + name)
+        elif prefix is not None and name == Path(name).name:
+            # libvpx installs a bare dylib ID. Resolve it only within the
+            # reviewed source prefix, never through the process working directory.
+            resolved = prefix / "lib" / name
         else:
             resolved = Path(name)
         if not resolved.is_absolute() or not resolved.is_file():
@@ -301,7 +305,7 @@ def collect_libraries(staging, prefix, target):
         shutil.copy2(real, destination)
         destination.chmod(0o755)
         origins[name] = {"path": str(real), "sha256": common.sha256(real.read_bytes())}
-        dependencies = macho_dependencies(real) if macos else elf_dependencies(real, prefix)
+        dependencies = macho_dependencies(real, prefix) if macos else elf_dependencies(real, prefix)
         for reference, dependency in dependencies:
             library_name = Path(reference).name
             pending.append((dependency, library_name))
