@@ -112,7 +112,7 @@ jobs:
         if: inputs.component == 'spice'
         shell: bash
         run: |
-          python -m pip install pefile==2024.8.26 zstandard==0.25.0 pyparsing==3.2.5 meson==1.5.2
+          python -m pip install pefile==2024.8.26 zstandard==0.25.0 pyparsing==3.2.5 meson==1.10.0
           if [ "$RUNNER_OS" != Windows ]; then bash scripts/ci/install-spice-deps.sh; fi
       - name: Validate contracts and packaging
         run: |

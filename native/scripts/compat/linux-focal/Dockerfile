@@ -36,7 +36,7 @@ RUN --mount=type=secret,id=proxy_ca,mode=0444 \
 # Python 3.8 and changes only build tooling, never the target's libc baseline.
 RUN --mount=type=secret,id=proxy_ca,mode=0444 \
     if [ -f /run/secrets/proxy_ca ]; then export PIP_CERT=/run/secrets/proxy_ca; fi; \
-    pip3 install --no-cache-dir meson==1.5.2 zstandard==0.22.0 tomli==2.2.1
+    pip3 install --no-cache-dir meson==1.10.0 zstandard==0.22.0 tomli==2.2.1
 
 ENV CARGO_HOME=/opt/cargo RUSTUP_HOME=/opt/rustup
 ENV PATH=/opt/cargo/bin:$PATH
