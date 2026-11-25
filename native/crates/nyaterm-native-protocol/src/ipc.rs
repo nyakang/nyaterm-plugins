@@ -700,6 +700,7 @@ mod tests {
     fn round_trips_partial_control_and_binary_frame_packets() {
         let control = encode_control(&RdpControlMessage::ClientHello {
             version: PROTOCOL_VERSION,
+            frame_update_complete: true,
         })
         .unwrap();
         let mut encoded = Vec::new();
@@ -710,7 +711,8 @@ mod tests {
         assert!(matches!(
             decode_control(&packets[0]).unwrap(),
             RdpControlMessage::ClientHello {
-                version: PROTOCOL_VERSION
+                version: PROTOCOL_VERSION,
+                frame_update_complete: true,
             }
         ));
 
@@ -742,6 +744,7 @@ mod tests {
             capabilities: RdpServerCapabilities {
                 committed_unicode_text: true,
                 secure_attention: true,
+                frame_update_complete: true,
             },
         })
         .unwrap();
@@ -751,6 +754,7 @@ mod tests {
                 capabilities: RdpServerCapabilities {
                     committed_unicode_text: true,
                     secure_attention: true,
+                    frame_update_complete: true,
                 },
                 ..
             }
@@ -765,6 +769,96 @@ mod tests {
             RdpControlMessage::SecureAttention { ref session_id } if session_id == "rdp"
         ));
         assert!(decode_vnc_control(&sas).is_err());
+    }
+
+    #[test]
+    fn legacy_rdp_hello_opts_out_of_submission_boundaries() {
+        let hello: RdpControlMessage =
+            serde_json::from_str(r#"{"ClientHello":{"version":13}}"#).unwrap();
+        assert!(matches!(
+            hello,
+            RdpControlMessage::ClientHello {
+                version: 13,
+                frame_update_complete: false,
+            }
+        ));
+        let hello: RdpControlMessage = serde_json::from_str(
+            r#"{"ServerHello":{"version":13,"capabilities":{"committed_unicode_text":true,"secure_attention":true}}}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            hello,
+            RdpControlMessage::ServerHello {
+                capabilities: RdpServerCapabilities {
+                    frame_update_complete: false,
+                    ..
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn legacy_rdp_receiver_ignores_optional_hello_fields() {
+        #[derive(serde::Deserialize)]
+        enum LegacyControl {
+            ClientHello {
+                version: u32,
+            },
+            ServerHello {
+                version: u32,
+                capabilities: LegacyCapabilities,
+            },
+        }
+        #[derive(serde::Deserialize)]
+        struct LegacyCapabilities {
+            committed_unicode_text: bool,
+            secure_attention: bool,
+        }
+
+        let client = encode_control(&RdpControlMessage::ClientHello {
+            version: PROTOCOL_VERSION,
+            frame_update_complete: true,
+        })
+        .unwrap();
+        assert!(matches!(
+            serde_json::from_slice::<LegacyControl>(&client.payload).unwrap(),
+            LegacyControl::ClientHello { version: 13 }
+        ));
+        let server = encode_control(&RdpControlMessage::ServerHello {
+            version: PROTOCOL_VERSION,
+            capabilities: RdpServerCapabilities {
+                committed_unicode_text: true,
+                secure_attention: true,
+                frame_update_complete: true,
+            },
+        })
+        .unwrap();
+        assert!(matches!(
+            serde_json::from_slice::<LegacyControl>(&server.payload).unwrap(),
+            LegacyControl::ServerHello {
+                version: 13,
+                capabilities: LegacyCapabilities {
+                    committed_unicode_text: true,
+                    secure_attention: true,
+                },
+            }
+        ));
+    }
+
+    #[test]
+    fn submission_boundary_round_trips_with_epoch_and_sequence() {
+        let packet = encode_control(&RdpControlMessage::FrameUpdateComplete {
+            session_id: "rdp".to_string(),
+            epoch: 9,
+            sequence: 42,
+        })
+        .unwrap();
+        assert!(matches!(
+            decode_control(&packet).unwrap(),
+            RdpControlMessage::FrameUpdateComplete { session_id, epoch: 9, sequence: 42 }
+                if session_id == "rdp"
+        ));
     }
 
     #[test]
