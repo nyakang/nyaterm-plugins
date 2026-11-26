@@ -2,12 +2,12 @@ use std::io;
 use std::io::{BufWriter, Write as _};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{
-    Arc, Condvar, Mutex,
+    Arc, Condvar, Mutex, OnceLock,
     atomic::{AtomicBool, Ordering},
     mpsc,
 };
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ironrdp_cfg::AudioMode as IronAudioMode;
 use ironrdp_client::config::{ClipboardType, ConfigBuilder, Destination, DriveRedirection};
@@ -23,12 +23,12 @@ use ironrdp_pdu::input::fast_path::{FastPathInputEvent, KeyboardFlags};
 use ironrdp_pdu::rdp::capability_sets::MajorPlatformType;
 use ironrdp_pdu::rdp::client_info::PerformanceFlags;
 use nyaterm_remote_desktop::{
-    CursorPosition, CursorShape, CursorVisibility, PROTOCOL_VERSION, Packet, PixelFormat,
-    RDP_ALL_DRIVES, RDP_FRAMEBUFFER_LIMITS, RdpAudioMode, RdpCapability, RdpCertificateRequest,
-    RdpCertificateResponse, RdpControlMessage, RdpDisplayConfig, RdpError, RdpErrorKind,
-    RdpFrameEvent, RdpInputEvent, RdpRedirectionConfig, RdpServerCapabilities, RdpSessionConfig,
-    RdpSessionState, RemoteCursorEvent, RemotePoint, RemotePointerButton, RemotePointerEvent,
-    RemoteWheelAxis, decode_control, encode_control, encode_cursor_packet,
+    CursorPosition, CursorShape, CursorVisibility, FRAME_PAYLOAD_LIMIT, PROTOCOL_VERSION, Packet,
+    PixelFormat, RDP_ALL_DRIVES, RDP_FRAMEBUFFER_LIMITS, RdpAudioMode, RdpCapability,
+    RdpCertificateRequest, RdpCertificateResponse, RdpControlMessage, RdpDisplayConfig, RdpError,
+    RdpErrorKind, RdpFrameEvent, RdpInputEvent, RdpRedirectionConfig, RdpServerCapabilities,
+    RdpSessionConfig, RdpSessionState, RemoteCursorEvent, RemotePoint, RemotePointerButton,
+    RemotePointerEvent, RemoteWheelAxis, decode_control, encode_control, encode_cursor_packet,
     encode_frame_packet_owned, parse_rdp_drive_letters, read_packet, validate_committed_text,
     validate_framebuffer_dimensions, write_packet_into,
 };
@@ -102,6 +102,7 @@ fn validate_control_phase(message: &RdpControlMessage, hello_received: bool) -> 
         RdpControlMessage::Pong { .. }
         | RdpControlMessage::ServerHello { .. }
         | RdpControlMessage::DesktopReset { .. }
+        | RdpControlMessage::FrameUpdateComplete { .. }
         | RdpControlMessage::State { .. }
         | RdpControlMessage::ClipboardTransfer { .. }
         | RdpControlMessage::CertificateRequest(_)
@@ -196,6 +197,7 @@ async fn run(provider_error: Option<String>) -> anyhow::Result<()> {
     let mut input_state = InputDatabase::default();
     let mut clipboard_bridge = None;
     let mut hello_received = false;
+    let mut frame_update_complete = false;
     let mut active_session_id: Option<String> = None;
     let mut clipboard_tick = tokio::time::interval(CLIPBOARD_TIMEOUT_CHECK_INTERVAL);
     clipboard_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -213,7 +215,10 @@ async fn run(provider_error: Option<String>) -> anyhow::Result<()> {
             RdpControlMessage::Ping { sequence } => {
                 send_control(&output_tx, RdpControlMessage::Pong { sequence })?;
             }
-            RdpControlMessage::ClientHello { version } => {
+            RdpControlMessage::ClientHello {
+                version,
+                frame_update_complete: requested_boundaries,
+            } => {
                 send_control(
                     &output_tx,
                     RdpControlMessage::ServerHello {
@@ -221,6 +226,7 @@ async fn run(provider_error: Option<String>) -> anyhow::Result<()> {
                         capabilities: RdpServerCapabilities {
                             committed_unicode_text: true,
                             secure_attention: true,
+                            frame_update_complete: true,
                         },
                     },
                 )?;
@@ -236,6 +242,7 @@ async fn run(provider_error: Option<String>) -> anyhow::Result<()> {
                     );
                 }
                 hello_received = true;
+                frame_update_complete = requested_boundaries;
             }
             RdpControlMessage::Connect { session_id, config } => {
                 if config.backend != nyaterm_remote_desktop::RdpBackend::Builtin {
@@ -279,7 +286,8 @@ async fn run(provider_error: Option<String>) -> anyhow::Result<()> {
                 )?;
                 let (rdp_output_tx, rdp_output_rx) = output_channel(64);
                 let rdpdr_attached = rdpdr.is_some();
-                let mut client = RdpClient::new(iron_config, rdp_output_tx).with_desktop_updates();
+                let mut client =
+                    RdpClient::new(iron_config, rdp_output_tx).with_desktop_update_boundaries();
                 if let Some(factory) = rdpdr {
                     client = client.with_rdpdr_backend_factory(factory);
                 }
@@ -323,6 +331,7 @@ async fn run(provider_error: Option<String>) -> anyhow::Result<()> {
                     input_sender,
                     connection_gate,
                     CONNECTION_TIMEOUT,
+                    frame_update_complete,
                 )));
                 active_session_id = Some(connected_session_id);
             }
@@ -487,6 +496,7 @@ async fn run(provider_error: Option<String>) -> anyhow::Result<()> {
             RdpControlMessage::Pong { .. }
             | RdpControlMessage::ServerHello { .. }
             | RdpControlMessage::DesktopReset { .. }
+            | RdpControlMessage::FrameUpdateComplete { .. }
             | RdpControlMessage::State { .. }
             | RdpControlMessage::ClipboardTransfer { .. }
             | RdpControlMessage::CertificateRequest(_)
@@ -513,10 +523,9 @@ async fn run(provider_error: Option<String>) -> anyhow::Result<()> {
 
 /// Pump outbound packets to stdout.
 ///
-/// Everything already queued is coalesced into one buffered write and flushed
-/// only once the queue drains, so a burst of frame packets costs a handful of
-/// write syscalls instead of one per packet. Latency is unchanged: whenever the
-/// producer is not ahead, each packet is flushed immediately.
+/// Everything already queued is coalesced into buffered writes. Submission
+/// boundaries flush immediately, even if more pixels are already queued, so the
+/// application can present a complete update while the producer stays busy.
 fn spawn_stdout_writer(
     output_rx: mpsc::Receiver<Outbound>,
 ) -> io::Result<thread::JoinHandle<io::Result<()>>> {
@@ -540,11 +549,44 @@ fn spawn_stdout_writer(
 }
 
 fn write_outbound(writer: &mut impl io::Write, outbound: Outbound) -> io::Result<()> {
+    let started = ipc_metrics_enabled().then(Instant::now);
+    let complete = matches!(
+        &outbound,
+        Outbound::Control(message) if matches!(**message, RdpControlMessage::FrameUpdateComplete { .. })
+    );
     let packet = match outbound {
         Outbound::Control(message) => encode_control(&message)?,
         Outbound::Packet(packet) => packet,
     };
-    write_packet_into(writer, &packet)
+    write_packet_into(writer, &packet)?;
+    if complete {
+        writer.flush()?;
+    }
+    if let Some(started) = started {
+        eprintln!(
+            "RDP IPC bytes={} write_flush_us={} complete={}",
+            packet.encoded_len()?,
+            started.elapsed().as_micros(),
+            u8::from(complete),
+        );
+    }
+    Ok(())
+}
+
+fn ipc_metrics_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("NYATERM_RDP_METRICS").as_deref() == Ok("1"))
+}
+
+fn send_desktop_packet(output_tx: &mpsc::SyncSender<Outbound>, packet: Packet) -> io::Result<()> {
+    let started = ipc_metrics_enabled().then(Instant::now);
+    output_tx
+        .send(Outbound::Packet(packet))
+        .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "RDP stdout writer stopped"))?;
+    if let Some(started) = started {
+        eprintln!("RDP output queue wait_us={}", started.elapsed().as_micros());
+    }
+    Ok(())
 }
 
 fn spawn_stdin_reader(
@@ -691,9 +733,8 @@ fn build_config(
         eprintln!("RDP device redirection unavailable on this platform; continuing without RDPDR");
     }
     let use_credssp = config.use_nla && config.password.is_some();
-    // The fork implements Progressive decoding, but this path has not been
-    // validated end to end. Keep it disabled independently of the saved request.
-    let gfx_effective = graphics_pipeline_effective(config.display.graphics_pipeline);
+    let gfx_effective =
+        graphics_pipeline_effective(config.display.graphics_pipeline, config.display.color_depth);
     // One line per connection, always: it is the only record that this process
     // negotiated a session at all, and it carries no host, account, or password.
     // Options are what separate "the graphics pipeline was never asked for" from
@@ -739,7 +780,6 @@ fn build_config(
         .with_performance_flags(PerformanceFlags::from_bits_truncate(
             performance_flags_bits(&config.display),
         ))
-        // See `gfx_effective`: this channel remains unavailable in this release.
         .with_graphics_pipeline(gfx_effective)
         // `none` authentication must not submit a password or enter CredSSP.
         .with_credssp(use_credssp)
@@ -923,8 +963,8 @@ fn rdpdr_selection(redirection: &RdpRedirectionConfig) -> Option<RdpdrSelection>
     }
 }
 
-fn graphics_pipeline_effective(_requested: bool) -> bool {
-    false
+fn graphics_pipeline_effective(requested: bool, color_depth: u8) -> bool {
+    requested && color_depth == 32
 }
 
 /// [MS-RDPBCGR] 2.2.1.11.1 performance flags, as a raw bit pattern.
@@ -990,9 +1030,30 @@ struct PreparedDesktopUpdate {
 struct DesktopOutputState {
     epoch: u64,
     extent: Option<(u32, u32)>,
+    sequence: u64,
+    pending: bool,
 }
 
 impl DesktopOutputState {
+    fn connection_reset(&mut self) {
+        self.extent = None;
+        self.sequence = 0;
+        self.pending = false;
+    }
+
+    fn complete(&mut self) -> Result<Option<(u64, u64)>, &'static str> {
+        if !self.pending {
+            return Ok(None);
+        }
+        let sequence = self
+            .sequence
+            .checked_add(1)
+            .ok_or("desktop submission sequence exhausted")?;
+        self.sequence = sequence;
+        self.pending = false;
+        Ok(Some((self.epoch, sequence)))
+    }
+
     fn prepare(&mut self, payload: DesktopPayload) -> Result<PreparedDesktopUpdate, &'static str> {
         validate_framebuffer_dimensions(
             payload.framebuffer_width,
@@ -1033,10 +1094,12 @@ impl DesktopOutputState {
         let reset = if self.extent == Some(extent) {
             None
         } else {
-            self.epoch = self.epoch.wrapping_add(1);
+            self.epoch = self.epoch.checked_add(1).ok_or("desktop epoch exhausted")?;
             self.extent = Some(extent);
+            self.sequence = 0;
             Some((self.epoch, extent.0, extent.1))
         };
+        self.pending = true;
         let full = payload.x == 0
             && payload.y == 0
             && payload.width == payload.framebuffer_width
@@ -1164,14 +1227,143 @@ fn forward_desktop_update(
         )?;
     }
 
-    encode_frame_packet_owned(session_id, prepared.frame)
-        .map(Outbound::Packet)
-        .and_then(|packet| {
-            output_tx
-                .send(packet)
-                .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "RDP stdout writer stopped"))
-        })
-        .map_err(|_| ())
+    send_desktop_frame(session_id, prepared.frame, output_tx, FRAME_PAYLOAD_LIMIT).map_err(
+        |error| {
+            let kind = if error.kind() == io::ErrorKind::OutOfMemory {
+                RdpErrorKind::ResourceExhausted
+            } else {
+                RdpErrorKind::Protocol
+            };
+            let _ = output_tx.send(Outbound::control(RdpControlMessage::Error {
+                session_id: session_id.to_string(),
+                error: RdpError::new(kind, error.to_string()),
+                fatal: true,
+            }));
+            input_tx.request_close();
+        },
+    )
+}
+
+fn send_desktop_frame(
+    session_id: &str,
+    frame: RdpFrameEvent,
+    output_tx: &mpsc::SyncSender<Outbound>,
+    payload_limit: usize,
+) -> io::Result<()> {
+    let RdpFrameEvent::Bitmap {
+        epoch,
+        full,
+        x,
+        y,
+        width,
+        height,
+        stride,
+        format,
+        pixels,
+    } = frame
+    else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "expected desktop bitmap",
+        ));
+    };
+    // Session length, epoch, flags/format, five geometry fields, and pixel length.
+    let prefix_bytes = 2 + session_id.len() + 8 + 1 + 1 + 5 * 4 + 4;
+    let pixel_limit = payload_limit.checked_sub(prefix_bytes).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "desktop packet prefix exceeds limit",
+        )
+    })?;
+    if pixels.len() <= pixel_limit {
+        let packet = encode_frame_packet_owned(
+            session_id,
+            RdpFrameEvent::Bitmap {
+                epoch,
+                full,
+                x,
+                y,
+                width,
+                height,
+                stride,
+                format,
+                pixels,
+            },
+        )?;
+        return send_desktop_packet(output_tx, packet);
+    }
+    let row_bytes = width as usize * 4;
+    if row_bytes == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "empty desktop row",
+        ));
+    }
+    let rows_per_packet = pixel_limit / row_bytes;
+    if rows_per_packet == 0 || stride as usize != row_bytes {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "desktop row exceeds packet limit",
+        ));
+    }
+    let mut row = 0;
+    while row < height as usize {
+        let rows = rows_per_packet.min(height as usize - row);
+        let source = &pixels[row * row_bytes..(row + rows) * row_bytes];
+        let mut chunk = Vec::new();
+        chunk.try_reserve_exact(source.len()).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::OutOfMemory,
+                "desktop stripe allocation failed",
+            )
+        })?;
+        chunk.extend_from_slice(source);
+        let packet = encode_frame_packet_owned(
+            session_id,
+            RdpFrameEvent::Bitmap {
+                epoch,
+                full: false,
+                x,
+                y: y + row as u32,
+                width,
+                height: rows as u32,
+                stride,
+                format,
+                pixels: chunk.into(),
+            },
+        )?;
+        send_desktop_packet(output_tx, packet)?;
+        row += rows;
+    }
+    Ok(())
+}
+
+fn forward_desktop_complete(
+    session_id: &str,
+    output_tx: &mpsc::SyncSender<Outbound>,
+    input_tx: &RdpInputSender,
+    desktop: &mut DesktopOutputState,
+    frame_update_complete: bool,
+) -> Result<(), ()> {
+    match desktop.complete() {
+        Ok(Some((epoch, sequence))) if frame_update_complete => output_tx
+            .send(Outbound::control(RdpControlMessage::FrameUpdateComplete {
+                session_id: session_id.to_string(),
+                epoch,
+                sequence,
+            }))
+            .map_err(|_| ()),
+        Ok(_) => Ok(()),
+        Err(reason) => {
+            let _ = output_tx.send(Outbound::control(RdpControlMessage::Error {
+                session_id: session_id.to_string(),
+                error: RdpError::new(RdpErrorKind::Protocol, reason),
+                fatal: true,
+            }));
+            input_tx.request_close();
+            Err(())
+        }
+    }
 }
 
 async fn forward_output(
@@ -1181,6 +1373,7 @@ async fn forward_output(
     input_tx: RdpInputSender,
     certificate_gate: Arc<CertificateGate>,
     connection_timeout: Duration,
+    frame_update_complete: bool,
 ) {
     let mut desktop = DesktopOutputState::default();
     let mut connected = false;
@@ -1234,6 +1427,12 @@ async fn forward_output(
             RdpOutputEvent::ConnectionFailure(_) | RdpOutputEvent::Terminated(_)
         );
         let result: Result<(), ()> = match event {
+            RdpOutputEvent::Connected | RdpOutputEvent::AutoReconnected => {
+                // A new activation may have exactly the previous dimensions.
+                // Its next desktop update still starts a new framebuffer epoch.
+                desktop.connection_reset();
+                Ok(())
+            }
             RdpOutputEvent::DesktopUpdate(update) => forward_desktop_update(
                 &session_id,
                 &output_tx,
@@ -1247,6 +1446,13 @@ async fn forward_output(
             ),
             // Keep the complete-image path so a future IronRDP configuration regression does
             // not silently discard every frame. The normal path uses `DesktopUpdate` above.
+            RdpOutputEvent::DesktopUpdateComplete => forward_desktop_complete(
+                &session_id,
+                &output_tx,
+                &input_tx,
+                &mut desktop,
+                frame_update_complete,
+            ),
             RdpOutputEvent::Image {
                 buffer,
                 width,
@@ -1261,7 +1467,16 @@ async fn forward_output(
                 cursor_position,
                 cursor_visible,
                 full_image_payload(buffer, width.get(), height.get()),
-            ),
+            )
+            .and_then(|()| {
+                forward_desktop_complete(
+                    &session_id,
+                    &output_tx,
+                    &input_tx,
+                    &mut desktop,
+                    frame_update_complete,
+                )
+            }),
             // The session could not resize in place and IronRDP is about to reconnect
             // with the new size. Report the capability so the UI stops offering dynamic
             // resize; the reconnect surfaces through the ordinary state events. The
@@ -1793,24 +2008,27 @@ mod tests {
         CertificateGate, DesktopOutputState, DesktopPayload, Outbound, build_config,
         classify_error, classify_failure, convert_and_send_input, convert_input,
         desktop_update_payload, device_redirection_requested, drive_name_for_path,
-        drive_redirection, error_chain, forward_full_frame_request, forward_output,
-        graphics_pipeline_effective, install_crypto_provider, is_transport_failure, output_channel,
+        drive_redirection, error_chain, forward_desktop_complete, forward_full_frame_request,
+        forward_output, install_crypto_provider, is_transport_failure, output_channel,
         performance_flags_bits, rdpdr_selection, report_ironrdp_panic, rgb_u32_to_bgra,
-        secure_attention_input, send_iron_input, send_reliable_iron_input,
-        validate_active_session_id, validate_input_events,
+        secure_attention_input, send_desktop_frame, send_iron_input, send_reliable_iron_input,
+        validate_active_session_id, validate_input_events, write_outbound,
     };
     use crate::client_name::resolve_client_name;
     use ironrdp_cfg::PropertySetExt;
-    use ironrdp_client::rdp::{DesktopUpdate, RdpInputEvent as IronInput, RdpInputSender};
+    use ironrdp_client::rdp::{
+        DesktopUpdate, RdpInputEvent as IronInput, RdpInputSender, RdpOutputEvent,
+    };
     use ironrdp_input::{Database as InputDatabase, Operation, Scancode};
     use ironrdp_pdu::geometry::InclusiveRectangle;
     use ironrdp_pdu::input::fast_path::{FastPathInputEvent, KeyboardFlags};
     use ironrdp_pdu::input::mouse::PointerFlags;
     use ironrdp_pdu::input::mouse_x::PointerXFlags;
     use nyaterm_remote_desktop::{
-        RdpAudioMode, RdpCertificatePolicy, RdpClipboardConfig, RdpControlMessage,
-        RdpDisplayConfig, RdpErrorKind, RdpInputEvent, RdpReconnectConfig, RdpRedirectionConfig,
-        RdpSessionConfig, RemotePoint, RemotePointerButton, RemotePointerEvent, RemoteWheelAxis,
+        Framebuffer, PixelFormat, RDP_FRAMEBUFFER_LIMITS, RdpAudioMode, RdpCertificatePolicy,
+        RdpClipboardConfig, RdpControlMessage, RdpDisplayConfig, RdpErrorKind, RdpFrameEvent,
+        RdpInputEvent, RdpReconnectConfig, RdpRedirectionConfig, RdpSessionConfig, RemotePoint,
+        RemotePointerButton, RemotePointerEvent, RemoteWheelAxis, decode_frame_packet_owned,
     };
 
     #[test]
@@ -2011,7 +2229,7 @@ mod tests {
     }
 
     #[test]
-    fn helper_keeps_graphics_pipeline_disabled_with_platform_decoders_available() {
+    fn helper_keeps_graphics_pipeline_opted_out_by_default() {
         let (output_tx, _output_rx) = mpsc::sync_channel(1);
         let (config, _, _) = build_config(
             "session",
@@ -2335,6 +2553,7 @@ mod tests {
             input_tx,
             Arc::new(CertificateGate::default()),
             Duration::from_millis(10),
+            false,
         )
         .await;
 
@@ -2433,9 +2652,225 @@ mod tests {
     }
 
     #[test]
-    fn graphics_pipeline_stays_off_for_both_saved_requests() {
-        assert!(!graphics_pipeline_effective(false));
-        assert!(!graphics_pipeline_effective(true));
+    fn graphics_pipeline_follows_the_saved_request_at_32_bit_depth() {
+        for (depth, requested, expected) in [
+            (32, true, true),
+            (32, false, false),
+            (16, true, false),
+            (24, true, false),
+        ] {
+            let mut source = helper_config();
+            source.display.color_depth = depth;
+            source.display.graphics_pipeline = requested;
+            source.redirection.clipboard = false;
+            let (output_tx, _output_rx) = mpsc::sync_channel(1);
+            let (built, _, _) = build_config(
+                "session",
+                &source,
+                output_tx,
+                Arc::new(CertificateGate::default()),
+            )
+            .unwrap();
+            assert_eq!(built.connector().support_dyn_vc_gfx_protocol, expected);
+            assert_eq!(source.display.graphics_pipeline, requested);
+        }
+    }
+
+    #[test]
+    fn unnegotiated_boundaries_do_not_emit_new_control_messages() {
+        let mut state = DesktopOutputState::default();
+        state
+            .prepare(DesktopPayload {
+                framebuffer_width: 1,
+                framebuffer_height: 1,
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+                pixels: vec![1; 4],
+            })
+            .unwrap();
+        let (tx, rx) = mpsc::sync_channel(2);
+        let (input, _) = RdpInputSender::channel(1);
+        forward_desktop_complete("s", &tx, &input, &mut state, false).unwrap();
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn split_desktop_packets_cover_every_row_before_completion() {
+        let pixels: Vec<u8> = (0..96).collect();
+        let frame = RdpFrameEvent::Bitmap {
+            epoch: 1,
+            full: true,
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 6,
+            stride: 16,
+            format: PixelFormat::Bgra8,
+            pixels: pixels.clone().into(),
+        };
+        let (tx, rx) = mpsc::sync_channel(8);
+        // The 37-byte prefix leaves room for exactly two rows per packet.
+        send_desktop_frame("s", frame, &tx, 69).unwrap();
+        drop(tx);
+        let mut fb = Framebuffer::new(1, 4, 6, RDP_FRAMEBUFFER_LIMITS).unwrap();
+        let mut count = 0;
+        for outbound in rx {
+            let Outbound::Packet(packet) = outbound else {
+                panic!("expected bitmap packet")
+            };
+            assert!(packet.encoded_len().unwrap() <= 69 + nyaterm_remote_desktop::HEADER_LEN);
+            let (session, frame) = decode_frame_packet_owned(packet).unwrap();
+            assert_eq!(session, "s");
+            fb.apply(&frame).unwrap();
+            count += 1;
+        }
+        assert_eq!(count, 3);
+        assert_eq!(fb.pixels(), pixels);
+    }
+
+    #[tokio::test]
+    async fn negotiated_boundaries_follow_all_regions_and_same_size_reconnect_resets_epoch() {
+        let (sender, receiver) = output_channel(16);
+        for lifecycle in [RdpOutputEvent::Connected, RdpOutputEvent::AutoReconnected] {
+            sender.try_send(lifecycle).unwrap();
+            sender
+                .try_send(RdpOutputEvent::DesktopUpdate(desktop_update(
+                    2,
+                    1,
+                    InclusiveRectangle {
+                        left: 0,
+                        top: 0,
+                        right: 1,
+                        bottom: 0,
+                    },
+                    vec![0x0011_2233; 2],
+                )))
+                .unwrap();
+            sender
+                .try_send(RdpOutputEvent::DesktopUpdate(desktop_update(
+                    2,
+                    1,
+                    InclusiveRectangle {
+                        left: 1,
+                        top: 0,
+                        right: 1,
+                        bottom: 0,
+                    },
+                    vec![0x0044_5566],
+                )))
+                .unwrap();
+            sender
+                .try_send(RdpOutputEvent::DesktopUpdateComplete)
+                .unwrap();
+        }
+        drop(sender);
+        let (input, _) = RdpInputSender::channel(1);
+        let (tx, rx) = mpsc::sync_channel(32);
+        forward_output(
+            "s".to_string(),
+            receiver,
+            tx,
+            input,
+            Arc::new(CertificateGate::default()),
+            Duration::from_secs(1),
+            true,
+        )
+        .await;
+        let mut submissions = Vec::new();
+        for outbound in rx {
+            match outbound {
+                Outbound::Control(message) => match *message {
+                    RdpControlMessage::DesktopReset { epoch, .. } => {
+                        submissions.push(("reset", epoch, 0))
+                    }
+                    RdpControlMessage::FrameUpdateComplete {
+                        epoch, sequence, ..
+                    } => submissions.push(("complete", epoch, sequence)),
+                    _ => {}
+                },
+                Outbound::Packet(packet) => {
+                    if let Ok((_, RdpFrameEvent::Bitmap { epoch, .. })) =
+                        decode_frame_packet_owned(packet)
+                    {
+                        submissions.push(("bitmap", epoch, 0));
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            submissions,
+            [
+                ("reset", 1, 0),
+                ("bitmap", 1, 0),
+                ("bitmap", 1, 0),
+                ("complete", 1, 1),
+                ("reset", 2, 0),
+                ("bitmap", 2, 0),
+                ("bitmap", 2, 0),
+                ("complete", 2, 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn submission_sequence_exhaustion_fails_without_wrapping() {
+        let mut state = DesktopOutputState {
+            epoch: 1,
+            extent: Some((1, 1)),
+            sequence: u64::MAX,
+            pending: true,
+        };
+        assert_eq!(
+            state.complete().unwrap_err(),
+            "desktop submission sequence exhausted"
+        );
+        assert_eq!(state.sequence, u64::MAX);
+        assert!(state.pending);
+    }
+
+    #[test]
+    fn submission_boundary_flushes_without_waiting_for_the_output_queue_to_empty() {
+        #[derive(Default)]
+        struct Writer {
+            bytes: Vec<u8>,
+            flushes: usize,
+        }
+        impl io::Write for Writer {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.bytes.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                self.flushes += 1;
+                Ok(())
+            }
+        }
+        let mut writer = Writer::default();
+        write_outbound(
+            &mut writer,
+            Outbound::control(RdpControlMessage::FrameUpdateComplete {
+                session_id: "s".to_string(),
+                epoch: 1,
+                sequence: 1,
+            }),
+        )
+        .unwrap();
+        assert_eq!(writer.flushes, 1);
+        assert!(matches!(
+            nyaterm_remote_desktop::decode_control(
+                &nyaterm_remote_desktop::read_packet(&mut io::Cursor::new(writer.bytes))
+                    .unwrap()
+                    .unwrap()
+            )
+            .unwrap(),
+            RdpControlMessage::FrameUpdateComplete {
+                epoch: 1,
+                sequence: 1,
+                ..
+            }
+        ));
     }
 
     #[test]

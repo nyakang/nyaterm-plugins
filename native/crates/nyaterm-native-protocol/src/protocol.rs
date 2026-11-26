@@ -56,6 +56,9 @@ pub fn validate_committed_text(text: &str) -> Result<(), CommittedTextError> {
 pub struct RdpServerCapabilities {
     pub committed_unicode_text: bool,
     pub secure_attention: bool,
+    /// Ordered desktop submission boundaries, emitted only when the client opts in.
+    #[serde(default)]
+    pub frame_update_complete: bool,
 }
 
 /// Static features implemented by a VNC helper for this IPC version.
@@ -1060,6 +1063,9 @@ pub enum RdpControlMessage {
     },
     ClientHello {
         version: u32,
+        /// Missing on legacy IPC 13 clients, which must not receive new messages.
+        #[serde(default)]
+        frame_update_complete: bool,
     },
     ServerHello {
         version: u32,
@@ -1074,6 +1080,13 @@ pub enum RdpControlMessage {
         epoch: u64,
         width: u32,
         height: u32,
+    },
+    /// All bitmap regions in this submission precede this message on the pipe.
+    /// Sequence numbers increase within an epoch and start at one after a reset.
+    FrameUpdateComplete {
+        session_id: String,
+        epoch: u64,
+        sequence: u64,
     },
     State {
         session_id: String,

@@ -5,6 +5,29 @@ its own SemVer in Cargo.toml. nyaterm-native-protocol owns bounded wire contract
 the application pins it by exact Git revision. No crate depends on the app checkout.
 Windows Native RDP remains in NyaTerm.
 
+## RDP presentation
+
+RDP IPC 13 supports an optional `frame_update_complete` boolean in `ClientHello`
+and `ServerHello.capabilities`. Missing fields mean false. The helper advertises
+support, but emits `FrameUpdateComplete { session_id, epoch, sequence }` only when
+the application opted in. Legacy applications continue receiving the existing
+bitmap packets. New applications receiving an older helper's capabilities can
+treat each bitmap as an update boundary.
+
+All bitmap regions for a submission precede its completion message on the pipe.
+Completion sequences start at one and increase within an epoch. A connection,
+reconnection or framebuffer size change starts a new epoch before new pixels;
+requesting a full frame keeps the current epoch. Completion flushes the buffered
+writer even while more output is queued. Large regions are split into rows that
+fit the existing frame-packet byte limit.
+
+The helper honors the saved GFX request at 32-bit color depth. Other color depths
+keep bitmap updates without rewriting the saved request. GFX codec selection and
+frame acknowledgments stay inside IronRDP; the decoder runs only in the helper.
+The legacy bitmap-codec list is independent of GFX negotiation. Setting
+`NYATERM_RDP_METRICS=1` adds numeric IPC write/flush and output-queue wait timings
+to stderr without logging hosts, accounts, clipboard data or framebuffer pixels.
+
 ## Development
 
 Run from this directory:
