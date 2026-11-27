@@ -14,6 +14,7 @@ REVISION = "2edd0331433b871c334ff2da6e983f505e2311c4"
 REPOSITORY = "https://github.com/nyakang/vcxsrv.git"
 TARGET = "x86_64-pc-windows-msvc"
 STAGING = ROOT / "target/x11-runtime"
+RUNTIME_LAYOUT = 2
 
 
 def prepare(target: str) -> Path:
@@ -22,8 +23,10 @@ def prepare(target: str) -> Path:
     source = ROOT / "target/x11-source"
     runtime = STAGING / target
     marker = runtime / "SOURCE.json"
-    if marker.is_file() and json.loads(marker.read_text())["revision"] == REVISION:
-        return runtime
+    if marker.is_file():
+        identity = json.loads(marker.read_text())
+        if identity.get("revision") == REVISION and identity.get("layout") == RUNTIME_LAYOUT:
+            return runtime
     source.parent.mkdir(parents=True, exist_ok=True)
     if not (source / ".git").exists():
         subprocess.run(["git", "clone", "--filter=blob:none", "--no-checkout", REPOSITORY, str(source)], check=True)
@@ -34,16 +37,23 @@ def prepare(target: str) -> Path:
     jobs = str(min(os.cpu_count() or 2, 8))
     def run(command, directory=source):
         subprocess.run(command, cwd=directory, env=env, check=True)
+    # Validate parser generators before spending time on native dependencies.
+    run(["MSBuild.exe", "tools/mhmake/mhmakevc10.sln", "-t:Build", "-p:Configuration=Release", "-p:Platform=x64", "-m:" + jobs])
     # Equivalent to upstream buildall.sh, using the caller's MSVC developer
     # environment rather than hard-coded WSL C:\\Python39 and Visual Studio paths.
     run(["MSBuild.exe", "freetype/MSBuild.sln", "-t:Build", "-p:Configuration=Release", "-p:Platform=x64", "-m:" + jobs])
     openssl = source / "openssl/release64"
     openssl.mkdir(exist_ok=True)
-    run(["perl.exe", "../Configure", "VC-WIN64A", "--release"], openssl)
+    configuration = dict(revision=REVISION, compiler=env.get("VCToolsVersion"), cl=env["CL"])
+    configured = openssl / "nyaterm-configuration.json"
+    if not configured.is_file() or json.loads(configured.read_text()) != configuration:
+        run(["perl.exe", "../Configure", "VC-WIN64A", "--release"], openssl)
+        configured.write_text(json.dumps(configuration), encoding="utf-8")
     run(["jom.exe", "/J" + jobs, "build_libs"], openssl)
     run(["nmake.exe", "VC-static"], source / "pthreads")
-    run(["MSBuild.exe", "tools/mhmake/mhmakevc10.sln", "-t:Build", "-p:Configuration=Release", "-p:Platform=x64", "-m:" + jobs])
     run([str(source / "tools/mhmake/Release64/mhmake.exe"), "-P" + jobs, "-C", "xorg-server", "MAKESERVER=1"])
+    if runtime.exists():
+        shutil.rmtree(runtime)
     runtime.mkdir(parents=True, exist_ok=True)
     # The pinned upstream installer is the authoritative runtime inventory.
     # Exclude tools and user host/config files; retain executable dependencies.
@@ -85,7 +95,7 @@ def prepare(target: str) -> Path:
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, destination)
     (runtime / "NOTICE.md").write_text("VcXsrv and bundled dependencies are independently licensed. See COPYING and licenses/.\nCorresponding source, patches and build instructions are pinned in SOURCE.json and NYATERM.md.\n", encoding="utf-8")
-    marker.write_text(json.dumps(dict(repository=REPOSITORY, revision=REVISION,
+    marker.write_text(json.dumps(dict(repository=REPOSITORY, revision=REVISION, layout=RUNTIME_LAYOUT,
         source=f"https://github.com/nyakang/vcxsrv/archive/{REVISION}.tar.gz",
         build_script="native/scripts/release/prepare_x11.py"), indent=2) + "\n", encoding="utf-8")
     return runtime
