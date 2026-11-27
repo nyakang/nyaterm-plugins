@@ -18,7 +18,7 @@ except ModuleNotFoundError:
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
-IDS = ("android", "rdp", "vnc", "spice")
+IDS = ("android", "rdp", "vnc", "spice", "x11")
 PLATFORMS = {
     ("x86_64-pc-windows-msvc", "windows-msvc"),
     ("aarch64-pc-windows-msvc", "windows-msvc"),
@@ -34,14 +34,18 @@ PUBLIC_KEY = Path(__file__).with_name("updater-public-key.txt")
 VERSION = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?")
 
 
+def component_platforms(component):
+    return {("x86_64-pc-windows-msvc", "windows-msvc")} if component == "x11" else PLATFORMS
+
+
 def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
 def ipc_version(component: str) -> int:
     source = ROOT / "crates/nyaterm-native-protocol/src"
-    path = source / ({"android": "android/ipc.rs", "spice": "spice/protocol.rs"}.get(component, "protocol.rs"))
-    name = "SPICE_PROTOCOL_VERSION" if component == "spice" else "VNC_PROTOCOL_VERSION" if component == "vnc" else "PROTOCOL_VERSION"
+    path = source / ({"android": "android/ipc.rs", "spice": "spice/protocol.rs", "x11": "x11.rs"}.get(component, "protocol.rs"))
+    name = "X11_PROTOCOL_VERSION" if component == "x11" else "SPICE_PROTOCOL_VERSION" if component == "spice" else "VNC_PROTOCOL_VERSION" if component == "vnc" else "PROTOCOL_VERSION"
     return int(re.search(rf"pub const {name}: u(?:16|32) = ([0-9]+);", path.read_text(encoding="utf-8"))[1])
 
 
@@ -53,6 +57,8 @@ def validate_manifest(manifest: dict) -> None:
         raise ValueError("invalid component identity")
     if not re.fullmatch(r"[a-zA-Z0-9_.-]+", manifest["runtime"]) or not re.fullmatch(r"[a-zA-Z0-9_-]+", manifest["target"]):
         raise ValueError("invalid component platform")
+    if manifest["component"] == "x11" and (manifest["target"], manifest["runtime"]) != ("x86_64-pc-windows-msvc", "windows-msvc"):
+        raise ValueError("unsupported X11 platform")
     if (manifest["target"], manifest["runtime"]) not in PLATFORMS:
         raise ValueError("unsupported native runtime")
     entry = "nyaterm-" + manifest["component"] + "-helper" + (".exe" if "windows" in manifest["target"] else "")
@@ -215,6 +221,10 @@ def stage(component: str, target: str, destination: Path) -> None:
         prepare_android.write_resource_manifest(destination, target)
         for name in ("NOTICE.md", "LICENSE.scrcpy"):
             shutil.copy2(ROOT / "crates/nyaterm-android-helper/assets" / name, destination)
+    elif component == "x11":
+        import prepare_x11
+        runtime = prepare_x11.prepare(target)
+        shutil.copytree(runtime, destination / "vcxsrv")
     elif component == "spice":
         import prepare_spice
         runtime = prepare_spice.prepare(target)

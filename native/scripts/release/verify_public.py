@@ -8,7 +8,7 @@ import tempfile
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-from components import IDS, MAX_ARCHIVE, PLATFORMS, digest, inspect, verify_signature
+from components import IDS, MAX_ARCHIVE, PLATFORMS, component_platforms, digest, inspect, verify_signature
 
 INDEX = "https://downloads.nyaterm.app/native/v1/index.json"
 
@@ -32,15 +32,23 @@ def verify(components, version):
     with tempfile.TemporaryDirectory(prefix="native-public-") as temporary:
         root = Path(temporary)
         index = root / "index.json"
-        download(INDEX, index, 4 * 1024 * 1024)
-        envelope = json.loads(index.read_text(encoding="utf-8"))
-        verify_signature(envelope["index"].encode(), envelope["signature"])
-        catalog = json.loads(envelope["index"])
-        if catalog["schema_version"] != 1: raise ValueError("unsupported index")
-        releases = [r for r in catalog["releases"] if r["component"] in components and r["version"] == version]
+        releases = []
+        indices = {INDEX.replace("/index.json", "/x11/index.json") if c == "x11" else INDEX for c in components}
+        for url in sorted(indices):
+            download(url, index, 4 * 1024 * 1024)
+            envelope = json.loads(index.read_text(encoding="utf-8"))
+            verify_signature(envelope["index"].encode(), envelope["signature"])
+            catalog = json.loads(envelope["index"])
+            if catalog["schema_version"] != 1: raise ValueError("unsupported index")
+            for release in catalog["releases"]:
+                if (release["component"] == "x11") != (url != INDEX):
+                    raise ValueError("component in incompatible public index")
+                if release["component"] in components and release["version"] == version:
+                    releases.append(release)
         for component in components:
             selected = [r for r in releases if r["component"] == component]
-            if len(selected) != len(PLATFORMS) or {(r["target"], r["runtime"]) for r in selected} != PLATFORMS:
+            expected = component_platforms(component)
+            if len(selected) != len(expected) or {(r["target"], r["runtime"]) for r in selected} != expected:
                 raise ValueError("incomplete public platform matrix: " + component)
         for release in releases:
             package = root / "component.zip"

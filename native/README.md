@@ -188,3 +188,31 @@ These tests create isolated registries and reject helper path overrides. They
 validate installation and selection, not real-device or remote-server sessions.
 The publication job also verifies the public downloads, with bounded retries for
 index cache propagation; its result is included in the publication summary.
+
+## X11 component
+
+Windows x64 X11 packages contain `nyaterm-x11-helper.exe` and a pinned VcXsrv
+runtime built by `scripts/release/prepare_x11.py`. Its source fork is
+`nyakang/vcxsrv`, branch `nyaterm`; `SOURCE.json` and `NYATERM.md` identify the
+exact source and loopback-listener patch. The component owns no framebuffer IPC.
+It starts one authenticated server per SSH session and defaults clipboard off.
+The package includes misc/scalable fonts; upstream's optional 75/100-DPI bitmap
+encoding collections are omitted to fit the existing 4096-file manifest limit.
+
+The X11 control pipe is bounded and versioned. Each server has a private
+authority file and a kill-on-close Job Object; EOF, Stop and helper death clean
+up its process tree. Runtime validation uses the actual staged package:
+
+```sh
+python scripts/release/verify_x11.py target/x11-smoke
+```
+
+The X11 validation workflow builds on Windows and verifies authentication,
+loopback listeners, simultaneous independent instances, ordinary shutdown and
+forced helper death. Desktop rendering, clipboard opt-in, DPI and multi-monitor
+behavior also require an interactive Windows smoke test before release.
+
+X11 publication uses `native/v1/x11/index.json`. Never add an `x11` record to
+`native/v1/index.json`: old NyaTerm versions cannot deserialize that component.
+The existing protected manual publication workflow supports X11 after the
+Windows package checks pass. ARM64, macOS and Linux X11 packages are not published.

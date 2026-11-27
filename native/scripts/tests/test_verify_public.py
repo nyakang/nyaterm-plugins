@@ -42,3 +42,21 @@ class PublicVerificationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 verify_public.download("https://example.com/native/v1/a.zip", Path("unused"), 100)
             open_url.assert_not_called()
+
+    def test_x11_uses_separate_index_and_single_windows_platform(self):
+        payload = b"signed-package"
+        release = dict(component="x11", version="1.0.0", host_version=">=2.0.8", ipc_version=1,
+                       target="x86_64-pc-windows-msvc", runtime="windows-msvc",
+                       url="https://downloads.nyaterm.app/native/v1/x11/component.zip",
+                       size=len(payload), sha256=verify_public.digest(payload))
+        manifest = dict(release, component_version="1.0.0")
+        index_url = verify_public.INDEX.replace("/index.json", "/x11/index.json")
+        def download(url, path, limit):
+            if url == index_url:
+                path.write_text(json.dumps(dict(index=json.dumps(dict(schema_version=1, releases=[release])), signature="signed")))
+            elif url == release["url"]:
+                path.write_bytes(payload)
+            else:
+                self.fail("X11 must not read the legacy index")
+        with mock.patch.object(verify_public, "download", side_effect=download), mock.patch.object(verify_public, "verify_signature"), mock.patch.object(verify_public, "inspect", return_value=(manifest, {"component.json": b"{}", "component.minisig": b"signed"})):
+            self.assertEqual(verify_public.verify(["x11"], "1.0.0")["packages"], 1)

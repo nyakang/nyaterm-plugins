@@ -80,13 +80,25 @@ def publish(directory: Path, store, report=None):
     if not packages:
         raise ValueError("no component packages")
     records = [(path, *release_record(path)) for path in packages]
+    # Old clients deserialize a closed enum before checking host_version.
+    # Never insert X11 into their shared index.
+    legacy = [item for item in records if item[2].get("component") != "x11"]
+    x11 = [item for item in records if item[2].get("component") == "x11"]
+    if legacy:
+        _publish_records(legacy, store, report, INDEX_KEY)
+    if x11:
+        _publish_records(x11, store, report, "native/v1/x11/index.json")
+
+
+def _publish_records(records, store, report, index_key):
     if report is not None:
+        report["index_key"] = index_key
         report["releases"] = [dict(record, build_id=inspect(package)[0]["build_id"])
                               for package, _, record in records]
         report["verified_assets"] = []
     with tempfile.TemporaryDirectory(prefix="native-index-") as temporary:
         path = Path(temporary) / "index.json"
-        previous = store.fetch(INDEX_KEY, path)
+        previous = store.fetch(index_key, path)
         if previous:
             if path.stat().st_size > 4 * 1024 * 1024:
                 raise ValueError("native index size limit")
@@ -105,7 +117,7 @@ def publish(directory: Path, store, report=None):
             if report is not None:
                 report["verified_assets"].append(key)
         path.write_text(envelope, encoding="utf-8")
-        store.put(INDEX_KEY, path, previous=previous)
+        store.put(index_key, path, previous=previous)
         if report is not None:
             report["index_sha256"] = digest(path.read_bytes())
             report["status"] = "published"
