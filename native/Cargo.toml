@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/nyaterm-native-protocol", "crates/nyaterm-rdp-helper", "crates/nyaterm-vnc-helper", "crates/nyaterm-spice-helper", "crates/nyaterm-android-helper"]
+members = ["crates/nyaterm-native-protocol", "crates/nyaterm-rdp-helper", "crates/nyaterm-vnc-helper", "crates/nyaterm-spice-helper", "crates/nyaterm-android-helper", "crates/nyaterm-x11-helper"]
 resolver = "3"
 
 [workspace.package]

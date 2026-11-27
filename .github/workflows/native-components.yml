@@ -4,7 +4,7 @@ on:
     inputs:
       component:
         type: choice
-        options: [android, rdp, vnc, spice]
+        options: [android, rdp, vnc, spice, x11]
         required: true
       publish:
         type: boolean
@@ -47,7 +47,7 @@ jobs:
 
   build:
     needs: preflight
-    if: ${{ !cancelled() && (needs.preflight.result == 'success' || needs.preflight.result == 'skipped') }}
+    if: ${{ !cancelled() && inputs.component != 'x11' && (needs.preflight.result == 'success' || needs.preflight.result == 'skipped') }}
     strategy:
       fail-fast: false
       matrix:
@@ -139,7 +139,7 @@ jobs:
 
   focal:
     needs: preflight
-    if: ${{ !cancelled() && (needs.preflight.result == 'success' || needs.preflight.result == 'skipped') }}
+    if: ${{ !cancelled() && inputs.component != 'x11' && (needs.preflight.result == 'success' || needs.preflight.result == 'skipped') }}
     runs-on: ubuntu-22.04
     timeout-minutes: 120
     env:
@@ -158,9 +158,16 @@ jobs:
           path: native/dist/*.zip
           if-no-files-found: error
 
+  x11:
+    needs: preflight
+    if: ${{ !cancelled() && inputs.component == 'x11' && (needs.preflight.result == 'success' || needs.preflight.result == 'skipped') }}
+    uses: ./.github/workflows/x11-check.yml
+    with:
+      host_version: ${{ inputs.host_version }}
+
   sign:
-    if: inputs.publish && github.ref == 'refs/heads/main'
-    needs: [build, focal]
+    if: ${{ !cancelled() && inputs.publish && github.ref == 'refs/heads/main' && ((inputs.component == 'x11' && needs.x11.result == 'success') || (inputs.component != 'x11' && needs.build.result == 'success' && needs.focal.result == 'success')) }}
+    needs: [build, focal, x11]
     runs-on: ubuntu-24.04
     environment: native-signing
     steps:
@@ -204,7 +211,7 @@ jobs:
           retention-days: 30
 
   publish:
-    if: inputs.publish && github.ref == 'refs/heads/main'
+    if: ${{ !cancelled() && inputs.publish && github.ref == 'refs/heads/main' && ((inputs.component == 'x11' && needs.x11.result == 'success') || (inputs.component != 'x11' && needs.build.result == 'success' && needs.focal.result == 'success')) }}
     needs: sign
     runs-on: ubuntu-24.04
     environment: native-signing

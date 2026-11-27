@@ -1,0 +1,51 @@
+name: X11 runtime validation
+on:
+  push:
+    branches: [feat/x11-runtime]
+    paths: ['native/**', '.github/workflows/x11-check.yml']
+  pull_request:
+    paths: ['native/crates/nyaterm-x11-helper/**', 'native/scripts/release/*x11*', '.github/workflows/x11-check.yml']
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      host_version:
+        type: string
+        default: ">=2.0.8, <3"
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 120
+    env:
+      HOST_VERSION: ${{ inputs.host_version || ">=2.0.8, <3" }}
+    defaults:
+      run:
+        working-directory: native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: 1.99.1 }
+      - uses: ilammy/msvc-dev-cmd@v1
+        with: { arch: x64 }
+      - name: Install upstream build tools
+        run: choco install nasm strawberryperl -y --no-progress
+      - name: Build, test and stage component
+        shell: pwsh
+        run: |
+          $env:PATH += ';C:\Program Files\NASM;C:\Strawberry\perl\bin;C:\Strawberry\c\bin'
+          cargo test --locked -p nyaterm-native-protocol -p nyaterm-x11-helper
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --locked --release --target x86_64-pc-windows-msvc -p nyaterm-x11-helper
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/release/components.py package --component x11 --target x86_64-pc-windows-msvc --runtime windows-msvc --host-version "$env:HOST_VERSION" --archive target/x11-component.zip
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -c "import zipfile; zipfile.ZipFile('target/x11-component.zip').extractall('target/x11-smoke')"
+          python scripts/release/verify_x11.py target/x11-smoke
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-x11-x86_64-pc-windows-msvc
+          path: native/target/x11-component.zip
