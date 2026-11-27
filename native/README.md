@@ -28,6 +28,11 @@ The legacy bitmap-codec list is independent of GFX negotiation. Setting
 `NYATERM_RDP_METRICS=1` adds numeric IPC write/flush and output-queue wait timings
 to stderr without logging hosts, accounts, clipboard data or framebuffer pixels.
 
+RDP 1.2.1 accepts the enhanced server-redirection header version emitted by
+GNOME/FreeRDP during remote-login handover. Its IronRDP pin retains the canonical
+Microsoft encoding and strict version checks for other PDUs. IPC remains version
+13, and connection settings, credentials and certificate policy are unchanged.
+
 ## Development
 
 Run from this directory:
