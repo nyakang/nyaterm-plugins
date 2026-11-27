@@ -34,8 +34,9 @@ The redirected TLS certificate must exactly match the certificate supplied
 by the broker, and configured certificate rejection remains authoritative.
 RDSTLS authentication finishes before MCS; encrypted credentials are never
 sent as a normal Client Info password. The component uses rustls and retains
-IPC 13, relay approval and existing persisted data formats. Live GNOME
-interoperability remains a separate acceptance check.
+IPC 13, relay approval and existing persisted data formats. On November 27,
+2026, a Windows client successfully connected to Ubuntu running GNOME Remote
+Desktop 50.2 and FreeRDP 3.32.1; RDSTLS handover and desktop frames were verified.
 
 FreeRDP's combined RDSTLS version 1/2 advertisement is accepted while the
 helper continues authenticating with version 1. A timeout after activation
