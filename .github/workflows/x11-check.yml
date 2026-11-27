@@ -38,7 +38,7 @@ jobs:
           restore-keys: vcxsrv-msvc-v1-
       - name: Install upstream build tools
         run: |
-          choco install nasm strawberryperl jom -y --no-progress
+          choco install nasm strawberryperl jom gperf -y --no-progress
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           New-Item -ItemType Directory -Force target | Out-Null
           Invoke-WebRequest https://github.com/lexxmark/winflexbison/releases/download/v2.5.25/win_flex_bison-2.5.25.zip -OutFile target/winflexbison.zip

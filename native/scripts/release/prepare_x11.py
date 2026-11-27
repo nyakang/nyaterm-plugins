@@ -20,6 +20,9 @@ RUNTIME_LAYOUT = 2
 def prepare(target: str) -> Path:
     if target != TARGET or sys.platform != "win32":
         raise ValueError("X11 runtime requires a Windows x64 MSVC build host")
+    for tool in ("MSBuild.exe", "win_bison.exe", "win_flex.exe", "perl.exe", "nasm.exe", "jom.exe", "gperf.exe", "gzip.exe"):
+        if not shutil.which(tool):
+            raise RuntimeError("Missing X11 build tool: " + tool)
     source = ROOT / "target/x11-source"
     runtime = STAGING / target
     marker = runtime / "SOURCE.json"
