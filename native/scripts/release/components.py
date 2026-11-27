@@ -34,6 +34,10 @@ PUBLIC_KEY = Path(__file__).with_name("updater-public-key.txt")
 VERSION = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?")
 
 
+def component_platforms(component):
+    return {("x86_64-pc-windows-msvc", "windows-msvc")} if component == "x11" else PLATFORMS
+
+
 def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 

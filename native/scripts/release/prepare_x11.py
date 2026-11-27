@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
-REVISION = "b85cdf20c5e2f38a73aeb8b5286f3c1fe925001a"
+REVISION = "2edd0331433b871c334ff2da6e983f505e2311c4"
 REPOSITORY = "https://github.com/nyakang/vcxsrv.git"
 TARGET = "x86_64-pc-windows-msvc"
 STAGING = ROOT / "target/x11-runtime"
@@ -30,7 +30,7 @@ def prepare(target: str) -> Path:
     subprocess.run(["git", "fetch", "origin", REVISION], cwd=source, check=True)
     subprocess.run(["git", "checkout", "--detach", REVISION], cwd=source, check=True)
     env = os.environ.copy()
-    env.update(MHMAKECONF=str(source), PYTHON3=sys.executable, IS64="1", CFLAGS="-FS")
+    env.update(MHMAKECONF=str(source), PYTHON3=sys.executable, IS64="1", CL=env.get("CL", "") + " /FS")
     jobs = str(min(os.cpu_count() or 2, 8))
     def run(command, directory=source):
         subprocess.run(command, cwd=directory, env=env, check=True)
@@ -40,7 +40,7 @@ def prepare(target: str) -> Path:
     openssl = source / "openssl/release64"
     openssl.mkdir(exist_ok=True)
     run(["perl.exe", "../Configure", "VC-WIN64A", "--release"], openssl)
-    run(["nmake.exe"], openssl)
+    run(["jom.exe", "/J" + jobs, "build_libs"], openssl)
     run(["nmake.exe", "VC-static"], source / "pthreads")
     run(["MSBuild.exe", "tools/mhmake/mhmakevc10.sln", "-t:Build", "-p:Configuration=Release", "-p:Platform=x64", "-m:" + jobs])
     run([str(source / "tools/mhmake/Release64/mhmake.exe"), "-P" + jobs, "-C", "xorg-server", "MAKESERVER=1"])

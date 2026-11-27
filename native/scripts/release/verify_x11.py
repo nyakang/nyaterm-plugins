@@ -34,8 +34,8 @@ def receive(process):
 def authenticate(port, cookie):
     with socket.create_connection(("127.0.0.1", port), timeout=2) as connection:
         connection.settimeout(2)
-        packet = struct.pack("<BBHHHHH", ord("l"), 0, 11, 0, 18, 16, 0)
-        connection.sendall(packet + b"MIT-MAGIC-COOKIE-1\0\0" + cookie)
+        packet = struct.pack("<BBHHHHH", ord("l"), 0, 11, 0, 18 if cookie else 0, len(cookie), 0)
+        connection.sendall(packet + (b"MIT-MAGIC-COOKIE-1\0\0" if cookie else b"") + cookie)
         return connection.recv(1) == b"\1"
 
 
@@ -63,6 +63,7 @@ def verify(root):
             ports.append(port)
             cookies.append(cookie)
             assert authenticate(port, cookie)
+            assert not authenticate(port, b"")
             assert not authenticate(port, bytes(byte ^ 255 for byte in cookie))
             # Inspect actual listeners rather than inferring binding from our destination.
             script = f"Get-NetTCPConnection -State Listen -LocalPort {port} | Select-Object -ExpandProperty LocalAddress"

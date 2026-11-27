@@ -30,12 +30,20 @@ jobs:
         with: { toolchain: 1.99.1 }
       - uses: ilammy/msvc-dev-cmd@v1
         with: { arch: x64 }
+      - uses: actions/cache/restore@v4
+        id: vcxsrv-cache
+        with:
+          path: native/target/x11-source
+          key: vcxsrv-msvc-v1-${{ github.sha }}
+          restore-keys: vcxsrv-msvc-v1-
       - name: Install upstream build tools
-        run: choco install nasm strawberryperl -y --no-progress
+        run: |
+          choco install nasm strawberryperl winflexbison3 jom -y --no-progress
+          python -m pip install lxml==6.0.2 Mako==1.3.10
       - name: Build, test and stage component
         shell: pwsh
         run: |
-          $env:PATH += ';C:\Program Files\NASM;C:\Strawberry\perl\bin;C:\Strawberry\c\bin'
+          $env:PATH += ';C:\Program Files\NASM;C:\Strawberry\perl\bin;C:\Strawberry\c\bin;C:\Program Files\Git\usr\bin'
           cargo test --locked -p nyaterm-native-protocol -p nyaterm-x11-helper
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo build --locked --release --target x86_64-pc-windows-msvc -p nyaterm-x11-helper
@@ -45,6 +53,11 @@ jobs:
           python -c "import zipfile; zipfile.ZipFile('target/x11-component.zip').extractall('target/x11-smoke')"
           python scripts/release/verify_x11.py target/x11-smoke
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/cache/save@v4
+        if: always() && steps.vcxsrv-cache.outputs.cache-hit != 'true'
+        with:
+          path: native/target/x11-source
+          key: vcxsrv-msvc-v1-${{ github.sha }}
       - uses: actions/upload-artifact@v4
         with:
           name: native-x11-x86_64-pc-windows-msvc

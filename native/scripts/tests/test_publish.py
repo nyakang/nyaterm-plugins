@@ -38,6 +38,27 @@ class PublicationTests(unittest.TestCase):
             with mock.patch.object(publish, "release_record", return_value=("native/v1/vnc/component.zip", record)), mock.patch.object(publish, "sign_bytes", return_value="signature"), mock.patch.object(publish, "verify_signature"):
                 publish.publish(root, store)
 
+    def test_x11_publication_leaves_legacy_index_untouched(self):
+        objects = {}
+        class MemoryStore:
+            def fetch(self, key, path):
+                if key not in objects: return None
+                path.write_bytes(objects[key])
+                return '"old"'
+            def put(self, key, path, **options):
+                objects[key] = path.read_bytes()
+        old = b'legacy signed envelope'
+        objects[publish.INDEX_KEY] = old
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "x11.zip").write_bytes(b"fixture")
+            record = dict(component="x11", version="1.0.0", target="x86_64-pc-windows-msvc", runtime="windows-msvc")
+            with mock.patch.object(publish, "release_record", return_value=("native/v1/x11/component.zip", record)), mock.patch.object(publish, "sign_bytes", return_value="signature"):
+                publish.publish(root, MemoryStore())
+        self.assertEqual(objects[publish.INDEX_KEY], old)
+        envelope = json.loads(objects["native/v1/x11/index.json"])
+        self.assertEqual(json.loads(envelope["index"])["releases"], [record])
+
     def test_asset_failure_never_replaces_index(self):
         store = Store(fail_asset=True)
         with self.assertRaises(RuntimeError): self.exercise(store)
