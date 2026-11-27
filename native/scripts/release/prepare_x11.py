@@ -2,6 +2,7 @@
 from __future__ import annotations
 import argparse
 import json
+import importlib.util
 import os
 from pathlib import Path
 import re
@@ -23,6 +24,9 @@ def prepare(target: str) -> Path:
     for tool in ("MSBuild.exe", "win_bison.exe", "win_flex.exe", "perl.exe", "nasm.exe", "jom.exe", "gperf.exe", "gzip.exe", "meson.exe", "ninja.exe"):
         if not shutil.which(tool):
             raise RuntimeError("Missing X11 build tool: " + tool)
+    for module in ("lxml", "mako", "yaml", "packaging"):
+        if importlib.util.find_spec(module) is None:
+            raise RuntimeError("Missing X11 build Python module: " + module)
     source = ROOT / "target/x11-source"
     runtime = STAGING / target
     marker = runtime / "SOURCE.json"
