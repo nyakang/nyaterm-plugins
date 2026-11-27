@@ -28,10 +28,14 @@ The legacy bitmap-codec list is independent of GFX negotiation. Setting
 `NYATERM_RDP_METRICS=1` adds numeric IPC write/flush and output-queue wait timings
 to stderr without logging hosts, accounts, clipboard data or framebuffer pixels.
 
-RDP 1.2.1 accepts the enhanced server-redirection header version emitted by
-GNOME/FreeRDP during remote-login handover. Its IronRDP pin retains the canonical
-Microsoft encoding and strict version checks for other PDUs. IPC remains version
-13, and connection settings, credentials and certificate policy are unchanged.
+RDP 1.2.2 supports GNOME remote-login handover through FreeRDP's enhanced
+server-redirection header and RDSTLS encrypted-password authentication.
+The redirected TLS certificate must exactly match the certificate supplied
+by the broker, and configured certificate rejection remains authoritative.
+RDSTLS authentication finishes before MCS; encrypted credentials are never
+sent as a normal Client Info password. The component uses rustls and retains
+IPC 13, relay approval and existing persisted data formats. Live GNOME
+interoperability remains a separate acceptance check.
 
 ## Development
 
