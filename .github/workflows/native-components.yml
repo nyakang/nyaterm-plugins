@@ -166,7 +166,7 @@ jobs:
       host_version: ${{ inputs.host_version }}
 
   sign:
-    if: ${{ !cancelled() && inputs.publish && github.ref == 'refs/heads/main' && needs.sign.result == 'success' }}
+    if: ${{ !cancelled() && inputs.publish && github.ref == 'refs/heads/main' && ((inputs.component == 'x11' && needs.x11.result == 'success') || (inputs.component != 'x11' && needs.build.result == 'success' && needs.focal.result == 'success')) }}
     needs: [build, focal, x11]
     runs-on: ubuntu-24.04
     environment: native-signing
@@ -212,7 +212,7 @@ jobs:
           retention-days: 30
 
   publish:
-    if: ${{ !cancelled() && inputs.publish && github.ref == 'refs/heads/main' && ((inputs.component == 'x11' && needs.x11.result == 'success') || (inputs.component != 'x11' && needs.build.result == 'success' && needs.focal.result == 'success')) }}
+    if: ${{ !cancelled() && inputs.publish && github.ref == 'refs/heads/main' && needs.sign.result == 'success' }}
     needs: sign
     runs-on: ubuntu-24.04
     environment: native-signing
