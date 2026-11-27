@@ -1701,7 +1701,7 @@ checksum = "791930b43c0d5973160d90a8f3894509f2b273430f5c5c73b668636d0287c5c0"
 [[package]]
 name = "ironrdp-async"
 version = "0.12.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "bytes",
  "ironrdp-connector",
@@ -1714,12 +1714,12 @@ dependencies = [
 [[package]]
 name = "ironrdp-bulk"
 version = "0.2.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 
 [[package]]
 name = "ironrdp-cfg"
 version = "0.3.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "ironrdp-propertyset",
 ]
@@ -1727,7 +1727,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-client"
 version = "0.1.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -1769,7 +1769,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-cliprdr"
 version = "0.9.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "bitflags 2.13.2",
  "ironrdp-core",
@@ -1781,7 +1781,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-cliprdr-format"
 version = "0.3.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "ironrdp-core",
  "png",
@@ -1790,7 +1790,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-cliprdr-native"
 version = "0.9.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "block2 0.5.1",
  "ironrdp-cliprdr",
@@ -1812,7 +1812,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-connector"
 version = "0.12.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "ironrdp-core",
  "ironrdp-error",
@@ -1828,7 +1828,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-core"
 version = "0.3.1"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "ironrdp-error",
 ]
@@ -1836,7 +1836,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-displaycontrol"
 version = "0.10.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "ironrdp-core",
  "ironrdp-dvc",
@@ -1848,7 +1848,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-dvc"
 version = "0.10.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "ironrdp-bulk",
  "ironrdp-core",
@@ -1860,7 +1860,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-echo"
 version = "0.6.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "ironrdp-core",
  "ironrdp-dvc",
@@ -1871,7 +1871,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-egfx"
 version = "0.5.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "bit_field",
  "bitflags 2.13.2",
@@ -1885,7 +1885,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-egfx-native"
 version = "0.2.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "ironrdp-egfx",
  "tracing",
@@ -1895,12 +1895,12 @@ dependencies = [
 [[package]]
 name = "ironrdp-error"
 version = "0.2.1"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 
 [[package]]
 name = "ironrdp-graphics"
 version = "0.11.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "bit_field",
  "bitflags 2.13.2",
@@ -1917,7 +1917,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-input"
 version = "0.9.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "bitvec",
  "ironrdp-pdu",
@@ -1927,7 +1927,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-mstsgu"
 version = "0.1.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.13.2",
@@ -1950,7 +1950,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-pdu"
 version = "0.11.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "bit_field",
  "bitflags 2.13.2",
@@ -1973,12 +1973,12 @@ dependencies = [
 [[package]]
 name = "ironrdp-propertyset"
 version = "0.1.1"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 
 [[package]]
 name = "ironrdp-rail"
 version = "0.3.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "ironrdp-core",
  "ironrdp-svc",
@@ -1987,7 +1987,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-rdcleanpath"
 version = "0.3.1"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "der 0.8.3",
 ]
@@ -1995,7 +1995,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-rdpdr"
 version = "0.9.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "bitflags 2.13.2",
  "getrandom 0.3.4",
@@ -2009,7 +2009,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-rdpdr-native"
 version = "0.9.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "ironrdp-core",
  "ironrdp-pdu",
@@ -2023,7 +2023,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-rdpeai"
 version = "0.2.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "ironrdp-core",
  "ironrdp-dvc",
@@ -2036,7 +2036,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-rdpei"
 version = "0.3.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "bitflags 2.13.2",
  "ironrdp-core",
@@ -2049,7 +2049,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-rdpemsc"
 version = "0.1.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "ironrdp-core",
  "ironrdp-dvc",
@@ -2060,7 +2060,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-rdpsnd"
 version = "0.11.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "bitflags 2.13.2",
  "ironrdp-core",
@@ -2074,7 +2074,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-rdpsnd-native"
 version = "0.8.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "cpal 0.17.3",
  "ironrdp-core",
@@ -2089,7 +2089,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-session"
 version = "0.13.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "ironrdp-bulk",
  "ironrdp-core",
@@ -2107,7 +2107,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-svc"
 version = "0.10.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "bitflags 2.13.2",
  "ironrdp-core",
@@ -2117,7 +2117,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-tls"
 version = "0.3.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "rustls-native-certs",
  "tokio",
@@ -2128,7 +2128,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-tokio"
 version = "0.12.0"
-source = "git+https://github.com/nyakang/IronRDP?rev=370d512abc4f2460cea320231dc61d9498a1c304#370d512abc4f2460cea320231dc61d9498a1c304"
+source = "git+https://github.com/nyakang/IronRDP?rev=96ff489a17a7ac2e2d8891007fc4054d4c4666e7#96ff489a17a7ac2e2d8891007fc4054d4c4666e7"
 dependencies = [
  "ironrdp-async",
  "ironrdp-connector",
@@ -2627,6 +2627,7 @@ dependencies = [
  "ironrdp-cfg",
  "ironrdp-client",
  "ironrdp-cliprdr",
+ "ironrdp-connector",
  "ironrdp-core",
  "ironrdp-input",
  "ironrdp-pdu",

@@ -26,11 +26,12 @@ use nyaterm_remote_desktop::{
     CursorPosition, CursorShape, CursorVisibility, FRAME_PAYLOAD_LIMIT, PROTOCOL_VERSION, Packet,
     PixelFormat, RDP_ALL_DRIVES, RDP_FRAMEBUFFER_LIMITS, RdpAudioMode, RdpCapability,
     RdpCertificateRequest, RdpCertificateResponse, RdpControlMessage, RdpDisplayConfig, RdpError,
-    RdpErrorKind, RdpFrameEvent, RdpInputEvent, RdpRedirectionConfig, RdpServerCapabilities,
-    RdpSessionConfig, RdpSessionState, RemoteCursorEvent, RemotePoint, RemotePointerButton,
-    RemotePointerEvent, RemoteWheelAxis, decode_control, encode_control, encode_cursor_packet,
-    encode_frame_packet_owned, parse_rdp_drive_letters, read_packet, validate_committed_text,
-    validate_framebuffer_dimensions, write_packet_into,
+    RdpErrorKind, RdpFrameEvent, RdpInputEvent, RdpRedirectRequest, RdpRedirectResponse,
+    RdpRedirectionConfig, RdpServerCapabilities, RdpSessionConfig, RdpSessionState,
+    RemoteCursorEvent, RemotePoint, RemotePointerButton, RemotePointerEvent, RemoteWheelAxis,
+    decode_control, encode_control, encode_cursor_packet, encode_frame_packet_owned,
+    parse_rdp_drive_letters, read_packet, validate_committed_text, validate_framebuffer_dimensions,
+    write_packet_into,
 };
 use sha2::{Digest, Sha256};
 use smallvec::SmallVec;
@@ -81,10 +82,109 @@ impl Drop for OleApartment {
 }
 
 #[derive(Default)]
+struct CertificateResponseState {
+    pending: Option<String>,
+    response: Option<RdpCertificateResponse>,
+    cancelled: bool,
+}
+
+#[derive(Default)]
 struct CertificateGate {
-    response: Mutex<Option<(String, RdpCertificateResponse)>>,
+    response: Mutex<CertificateResponseState>,
     changed: Condvar,
     waiting: AtomicBool,
+    redirection_enabled: AtomicBool,
+    redirect_waiting: AtomicBool,
+    redirect: Mutex<
+        Option<(
+            RdpRedirectRequest,
+            tokio::sync::oneshot::Sender<RdpRedirectResponse>,
+        )>,
+    >,
+}
+
+impl CertificateGate {
+    fn respond_certificate(&self, request_id: &str, response: RdpCertificateResponse) -> bool {
+        let mut state = self
+            .response
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if state.cancelled
+            || state.pending.as_deref() != Some(request_id)
+            || state.response.is_some()
+        {
+            return false;
+        }
+        state.response = Some(response);
+        self.changed.notify_all();
+        true
+    }
+
+    fn cancel(&self) {
+        self.response
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .cancelled = true;
+        self.changed.notify_all();
+        self.cancel_redirect();
+    }
+
+    fn respond_redirect(
+        &self,
+        request: &RdpRedirectRequest,
+        response: RdpRedirectResponse,
+    ) -> bool {
+        let state = self
+            .response
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if state.cancelled {
+            return false;
+        }
+        let mut pending = self
+            .redirect
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if !pending
+            .as_ref()
+            .is_some_and(|(expected, _)| expected == request)
+        {
+            return false;
+        }
+        let (_, sender) = pending.take().expect("matched pending redirect");
+        sender.send(response).is_ok()
+    }
+
+    fn cancel_redirect(&self) {
+        self.redirect
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take();
+        self.redirect_waiting.store(false, Ordering::Release);
+    }
+}
+
+struct CertificateWaitGuard(Arc<CertificateGate>);
+
+impl Drop for CertificateWaitGuard {
+    fn drop(&mut self) {
+        let mut state = self
+            .0
+            .response
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        state.pending = None;
+        state.response = None;
+        self.0.waiting.store(false, Ordering::Release);
+    }
+}
+
+struct RedirectWaitGuard(Arc<CertificateGate>);
+
+impl Drop for RedirectWaitGuard {
+    fn drop(&mut self) {
+        self.0.cancel_redirect();
+    }
 }
 
 fn validate_control_phase(message: &RdpControlMessage, hello_received: bool) -> anyhow::Result<()> {
@@ -105,6 +205,7 @@ fn validate_control_phase(message: &RdpControlMessage, hello_received: bool) -> 
         | RdpControlMessage::FrameUpdateComplete { .. }
         | RdpControlMessage::State { .. }
         | RdpControlMessage::ClipboardTransfer { .. }
+        | RdpControlMessage::RedirectRequest(_)
         | RdpControlMessage::CertificateRequest(_)
         | RdpControlMessage::Capability { .. }
         | RdpControlMessage::Error { .. } => {
@@ -117,6 +218,7 @@ fn validate_control_phase(message: &RdpControlMessage, hello_received: bool) -> 
         | RdpControlMessage::Resize { .. }
         | RdpControlMessage::Clipboard { .. }
         | RdpControlMessage::ClipboardTransferCancel { .. }
+        | RdpControlMessage::RedirectResponse { .. }
         | RdpControlMessage::CertificateResponse { .. }
         | RdpControlMessage::RequestFullFrame { .. }
         | RdpControlMessage::Disconnect { .. } => Ok(()),
@@ -218,6 +320,7 @@ async fn run(provider_error: Option<String>) -> anyhow::Result<()> {
             RdpControlMessage::ClientHello {
                 version,
                 frame_update_complete: requested_boundaries,
+                server_redirection: requested_redirection,
             } => {
                 send_control(
                     &output_tx,
@@ -227,6 +330,7 @@ async fn run(provider_error: Option<String>) -> anyhow::Result<()> {
                             committed_unicode_text: true,
                             secure_attention: true,
                             frame_update_complete: true,
+                            server_redirection: true,
                         },
                     },
                 )?;
@@ -243,6 +347,9 @@ async fn run(provider_error: Option<String>) -> anyhow::Result<()> {
                 }
                 hello_received = true;
                 frame_update_complete = requested_boundaries;
+                certificate_gate
+                    .redirection_enabled
+                    .store(requested_redirection, Ordering::Release);
             }
             RdpControlMessage::Connect { session_id, config } => {
                 if config.backend != nyaterm_remote_desktop::RdpBackend::Builtin {
@@ -411,16 +518,18 @@ async fn run(provider_error: Option<String>) -> anyhow::Result<()> {
                     )?;
                 }
             }
+            RdpControlMessage::RedirectResponse { request, response } => {
+                validate_active_session_id(active_session_id.as_deref(), &request.session_id)?;
+                if !certificate_gate.redirection_enabled.load(Ordering::Acquire) {
+                    anyhow::bail!("unnegotiated RDP redirect response");
+                }
+                certificate_gate.respond_redirect(&request, response);
+            }
             RdpControlMessage::CertificateResponse {
                 request_id,
                 response,
             } => {
-                let mut slot = certificate_gate
-                    .response
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                *slot = Some((request_id, response));
-                certificate_gate.changed.notify_all();
+                certificate_gate.respond_certificate(&request_id, response);
             }
             RdpControlMessage::Clipboard {
                 session_id,
@@ -454,6 +563,7 @@ async fn run(provider_error: Option<String>) -> anyhow::Result<()> {
                 }
             }
             RdpControlMessage::Disconnect { session_id } => {
+                certificate_gate.cancel();
                 validate_active_session_id(active_session_id.as_deref(), &session_id)?;
                 if let Some(bridge) = clipboard_bridge.take() {
                     bridge.stop();
@@ -499,6 +609,7 @@ async fn run(provider_error: Option<String>) -> anyhow::Result<()> {
             | RdpControlMessage::FrameUpdateComplete { .. }
             | RdpControlMessage::State { .. }
             | RdpControlMessage::ClipboardTransfer { .. }
+            | RdpControlMessage::RedirectRequest(_)
             | RdpControlMessage::CertificateRequest(_)
             | RdpControlMessage::Capability { .. }
             | RdpControlMessage::Error { .. } => {
@@ -507,6 +618,7 @@ async fn run(provider_error: Option<String>) -> anyhow::Result<()> {
         }
     }
 
+    certificate_gate.cancel();
     if let Some(bridge) = clipboard_bridge {
         bridge.stop();
     }
@@ -627,11 +739,11 @@ fn build_config(
     output_tx: mpsc::SyncSender<Outbound>,
     certificate_gate: Arc<CertificateGate>,
 ) -> anyhow::Result<BuiltRdpConfig> {
-    let destination = Destination::new(format!("{}:{}", config.host, config.port))?;
-    let certificate_endpoint = destination.to_string();
-    let port = config.port;
+    let destination = Destination::from_parts(config.host.clone(), config.port);
+    let certificate_identity = Arc::new(Mutex::new(destination.clone()));
+    let verifier_identity = certificate_identity.clone();
+    let redirect_gate = certificate_gate.clone();
     let certificate_output_tx = output_tx.clone();
-    let host = config.host.clone();
     // IronRDP calls this only when the platform trust store rejects the chain, which
     // for RDP is the common case (self-signed host certificates). A chain the store
     // already trusts is accepted without a prompt.
@@ -639,9 +751,15 @@ fn build_config(
         Arc::new(move |der, endpoint, validation_error| {
             // Trust records and user prompts belong to the configured server. Upstream
             // may now follow redirects; never label another endpoint as this host.
-            if endpoint != certificate_endpoint {
+            let identity = verifier_identity
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clone();
+            if endpoint != identity.to_string() {
                 return false;
             }
+            let host = identity.name().to_owned();
+            let port = identity.port();
             let request_id = Uuid::new_v4().to_string();
             let fingerprint = Sha256::digest(der)
                 .iter()
@@ -668,29 +786,56 @@ fn build_config(
                     .map(|cert| cert.tbs_certificate.validity.not_after.to_string()),
             };
             let _ = validation_error;
-            if certificate_output_tx
-                .send(Outbound::control(RdpControlMessage::CertificateRequest(
-                    request,
-                )))
-                .is_err()
             {
-                return false;
+                let mut state = certificate_gate
+                    .response
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                if state.cancelled {
+                    return false;
+                }
+                state.pending = Some(request_id.clone());
+                state.response = None;
+                certificate_gate.waiting.store(true, Ordering::Release);
             }
-            certificate_gate.waiting.store(true, Ordering::Release);
+            let _guard = CertificateWaitGuard(certificate_gate.clone());
             let deadline = std::time::Instant::now() + Duration::from_secs(120);
+            let mut message = Outbound::control(RdpControlMessage::CertificateRequest(request));
+            loop {
+                if std::time::Instant::now() >= deadline
+                    || certificate_gate
+                        .response
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .cancelled
+                {
+                    return false;
+                }
+                match certificate_output_tx.try_send(message) {
+                    Ok(()) => break,
+                    Err(mpsc::TrySendError::Disconnected(_)) => return false,
+                    Err(mpsc::TrySendError::Full(returned)) => {
+                        message = returned;
+                        // TLS invokes this synchronous callback outside the IPC dispatcher.
+                        // Bound backpressure here so shutdown can still release the verifier.
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                }
+            }
             let mut slot = certificate_gate
                 .response
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             let accepted = loop {
-                if let Some((response_id, response)) = slot.take()
-                    && response_id == request_id
-                {
-                    break !matches!(response, RdpCertificateResponse::Reject);
+                if slot.cancelled {
+                    break false;
                 }
                 let now = std::time::Instant::now();
                 if now >= deadline {
                     break false;
+                }
+                if let Some(response) = slot.response.take() {
+                    break !matches!(response, RdpCertificateResponse::Reject);
                 }
                 let waited = certificate_gate.changed.wait_timeout(slot, deadline - now);
                 slot = match waited {
@@ -698,7 +843,7 @@ fn build_config(
                     Err(poisoned) => poisoned.into_inner().0,
                 };
             };
-            certificate_gate.waiting.store(false, Ordering::Release);
+            drop(slot);
             accepted
         });
     let platform = if cfg!(target_os = "windows") {
@@ -826,6 +971,107 @@ fn build_config(
             relay.address,
             relay.token.expose_secret().as_bytes().to_vec(),
         );
+    }
+    if redirect_gate.redirection_enabled.load(Ordering::Acquire) {
+        let redirect_session_id = session_id.to_owned();
+        let relay_required = config.relay.is_some();
+        let redirect_output = output_tx.clone();
+        builder = builder.with_redirection_handler(Arc::new(move |target| {
+            let gate = redirect_gate.clone();
+            let identity = certificate_identity.clone();
+            let output = redirect_output.clone();
+            let request = RdpRedirectRequest {
+                session_id: redirect_session_id.clone(),
+                request_id: Uuid::new_v4().to_string(),
+                generation: 1,
+                hop: target.hop,
+                host: target.host,
+                port: target.port,
+                connect_hosts: target.connect_hosts,
+            };
+            Box::pin(async move {
+                request
+                    .validate()
+                    .map_err(|error| ironrdp_connector::reason_err!("Redirect", "{error}"))?;
+                let (sender, receiver) = tokio::sync::oneshot::channel();
+                {
+                    let state = gate
+                        .response
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner());
+                    if state.cancelled {
+                        return Err(ironrdp_connector::reason_err!(
+                            "Redirect",
+                            "redirect preparation cancelled"
+                        ));
+                    }
+                    *gate
+                        .redirect
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner()) =
+                        Some((request.clone(), sender));
+                    gate.redirect_waiting.store(true, Ordering::Release);
+                }
+                let _guard = RedirectWaitGuard(gate.clone());
+                let send_request = request.clone();
+                let response = tokio::time::timeout(Duration::from_secs(120), async move {
+                    let mut message =
+                        Outbound::control(RdpControlMessage::RedirectRequest(send_request));
+                    loop {
+                        if gate
+                            .response
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner())
+                            .cancelled
+                        {
+                            return Err("redirect preparation cancelled");
+                        }
+                        match output.try_send(message) {
+                            Ok(()) => break,
+                            Err(mpsc::TrySendError::Disconnected(_)) => {
+                                return Err("redirect output channel closed");
+                            }
+                            Err(mpsc::TrySendError::Full(returned)) => {
+                                message = returned;
+                                tokio::time::sleep(Duration::from_millis(5)).await;
+                            }
+                        }
+                    }
+                    receiver.await.map_err(|_| "redirect preparation cancelled")
+                })
+                .await
+                .map_err(|_| {
+                    ironrdp_connector::reason_err!("Redirect", "redirect preparation timed out")
+                })?
+                .map_err(|error| ironrdp_connector::reason_err!("Redirect", "{error}"))?;
+                let route = match response {
+                    RdpRedirectResponse::Ready { relay: Some(relay) } => {
+                        relay.validate().map_err(|error| {
+                            ironrdp_connector::reason_err!("Redirect", "{error}")
+                        })?;
+                        ironrdp_client::config::RedirectionRoute::Relay {
+                            address: relay.address,
+                            authentication: relay.token.expose_secret().as_bytes().to_vec(),
+                        }
+                    }
+                    RdpRedirectResponse::Ready { relay: None } if !relay_required => {
+                        ironrdp_client::config::RedirectionRoute::Direct
+                    }
+                    RdpRedirectResponse::Ready { relay: None } => {
+                        return Err(ironrdp_connector::reason_err!(
+                            "Redirect",
+                            "redirected connection requires a relay"
+                        ));
+                    }
+                    RdpRedirectResponse::Rejected { message } => {
+                        return Err(ironrdp_connector::reason_err!("Redirect", "{message}"));
+                    }
+                };
+                *identity.lock().unwrap_or_else(|error| error.into_inner()) =
+                    Destination::from_parts(request.host, request.port);
+                Ok(route)
+            })
+        }));
     }
     let config = builder.build()?;
     Ok((config, clipboard, rdpdr.map(|selection| selection.factory)))
@@ -1395,7 +1641,7 @@ async fn forward_output(
             tokio::select! {
                 event = receiver.recv() => event,
                 () = &mut connection_deadline => {
-                    if certificate_gate.waiting.load(Ordering::Acquire) {
+                    if certificate_gate.waiting.load(Ordering::Acquire) || certificate_gate.redirect_waiting.load(Ordering::Acquire) {
                         connection_deadline
                             .as_mut()
                             .reset(tokio::time::Instant::now() + connection_timeout);
@@ -1427,6 +1673,19 @@ async fn forward_output(
             RdpOutputEvent::ConnectionFailure(_) | RdpOutputEvent::Terminated(_)
         );
         let result: Result<(), ()> = match event {
+            RdpOutputEvent::ServerRedirected { .. } => {
+                connected = false;
+                connection_deadline
+                    .as_mut()
+                    .reset(tokio::time::Instant::now() + connection_timeout);
+                output_tx
+                    .send(Outbound::control(RdpControlMessage::State {
+                        session_id: session_id.clone(),
+                        state: RdpSessionState::Connecting,
+                        message: None,
+                    }))
+                    .map_err(|_| ())
+            }
             RdpOutputEvent::Connected | RdpOutputEvent::AutoReconnected => {
                 // A new activation may have exactly the previous dimensions.
                 // Its next desktop update still starts a new framebuffer epoch.
@@ -1999,10 +2258,12 @@ fn report_ironrdp_panic(
 
 #[cfg(test)]
 mod tests {
+    use nyaterm_remote_desktop::RdpCertificateResponse;
     use std::io;
     use std::num::NonZeroU16;
+    use std::sync::atomic::Ordering;
     use std::sync::{Arc, mpsc};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use super::{
         CertificateGate, DesktopOutputState, DesktopPayload, Outbound, build_config,
@@ -2030,6 +2291,175 @@ mod tests {
         RdpInputEvent, RdpReconnectConfig, RdpRedirectionConfig, RdpSessionConfig, RemotePoint,
         RemotePointerButton, RemotePointerEvent, RemoteWheelAxis, decode_frame_packet_owned,
     };
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn prepared_redirect_certificate_is_attributed_to_target_not_broker() {
+        // oracle: CONTRACT.rdp-redirection.md, target identity and independent trust.
+        let gate = Arc::new(CertificateGate::default());
+        gate.redirection_enabled.store(true, Ordering::Release);
+        let (output, receiver) = mpsc::sync_channel(4);
+        let (config, _, _) =
+            build_config("session", &helper_config(), output, gate.clone()).unwrap();
+        let worker = tokio::spawn(async move {
+            ironrdp_client::__test_prepare_server_redirection(
+                &config,
+                &ironrdp_pdu::rdp::server_redirection::ServerRedirectionPdu {
+                    target_fqdn: Some("target.example".into()),
+                    target_net_address: Some("192.0.2.2".into()),
+                    ..Default::default()
+                },
+                1,
+            )
+            .await
+        });
+        let Outbound::Control(message) = receiver.recv_timeout(Duration::from_secs(2)).unwrap()
+        else {
+            panic!("expected redirect request")
+        };
+        let RdpControlMessage::RedirectRequest(request) = *message else {
+            panic!("expected redirect request")
+        };
+        assert_eq!(request.host, "target.example");
+        assert!(gate.respond_redirect(
+            &request,
+            nyaterm_remote_desktop::RdpRedirectResponse::Ready { relay: None }
+        ));
+        let (prepared, _) = worker.await.unwrap().unwrap();
+        let callback = prepared.certificate_validation_callback().unwrap().clone();
+        assert!(!callback(b"certificate", "other.example:3389", "untrusted"));
+        let certificate = std::thread::spawn(move || {
+            callback(b"certificate", "target.example:3389", "untrusted")
+        });
+        let Outbound::Control(message) = receiver.recv_timeout(Duration::from_secs(2)).unwrap()
+        else {
+            panic!("expected certificate request")
+        };
+        let RdpControlMessage::CertificateRequest(request) = *message else {
+            panic!("expected certificate request")
+        };
+        assert_eq!(request.host, "target.example");
+        assert_eq!(request.port, 3389);
+        assert!(gate.respond_certificate(&request.request_id, RdpCertificateResponse::TrustOnce));
+        assert!(certificate.join().unwrap());
+    }
+
+    #[tokio::test]
+    async fn cancelled_gate_does_not_register_a_new_redirect() {
+        // oracle: CONTRACT.rdp-redirection.md, closing invalidates pending work.
+        let gate = Arc::new(CertificateGate::default());
+        gate.redirection_enabled.store(true, Ordering::Release);
+        let (output, receiver) = mpsc::sync_channel(1);
+        let (config, _, _) =
+            build_config("session", &helper_config(), output, gate.clone()).unwrap();
+        gate.cancel();
+        let outcome = ironrdp_client::__test_prepare_server_redirection(
+            &config,
+            &ironrdp_pdu::rdp::server_redirection::ServerRedirectionPdu {
+                target_fqdn: Some("target.example".into()),
+                ..Default::default()
+            },
+            1,
+        )
+        .await;
+        assert!(outcome.is_err());
+        assert!(receiver.try_recv().is_err());
+        assert!(gate.redirect.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn cancelling_certificate_delivery_releases_a_full_output_queue() {
+        // oracle: CONTRACT.rdp-redirection.md, cancellation bounds the entire certificate request.
+        let gate = Arc::new(CertificateGate::default());
+        let (output, _receiver) = mpsc::sync_channel(1);
+        output
+            .send(Outbound::control(RdpControlMessage::Pong { sequence: 1 }))
+            .unwrap();
+        let (config, _, _) =
+            build_config("session", &helper_config(), output, gate.clone()).unwrap();
+        let callback = config.certificate_validation_callback().unwrap().clone();
+        let endpoint = config.destination().to_string();
+        let (finished, completion) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            finished
+                .send(callback(b"certificate", &endpoint, "untrusted"))
+                .unwrap();
+        });
+        let started_deadline = Instant::now() + Duration::from_secs(2);
+        while !gate.waiting.load(Ordering::Acquire) {
+            assert!(
+                Instant::now() < started_deadline,
+                "certificate request never started"
+            );
+            std::thread::yield_now();
+        }
+        gate.cancel();
+        assert!(!completion.recv_timeout(Duration::from_secs(2)).unwrap());
+        worker.join().unwrap();
+        assert!(gate.response.lock().unwrap().pending.is_none());
+    }
+
+    #[test]
+    fn stale_certificate_reply_cannot_replace_an_accepted_reply() {
+        let gate = CertificateGate::default();
+        gate.response.lock().unwrap().pending = Some("current".into());
+        assert!(!gate.respond_certificate("old", RdpCertificateResponse::Reject));
+        assert!(gate.respond_certificate("current", RdpCertificateResponse::TrustOnce));
+        assert!(!gate.respond_certificate("current", RdpCertificateResponse::Reject));
+        assert_eq!(
+            gate.response.lock().unwrap().response,
+            Some(RdpCertificateResponse::TrustOnce)
+        );
+    }
+
+    #[test]
+    fn cancelling_certificate_prompt_wakes_waiter_and_rejects_late_reply() {
+        let gate = Arc::new(CertificateGate::default());
+        let (output, receiver) = mpsc::sync_channel(1);
+        let (config, _, _) =
+            build_config("session", &helper_config(), output, gate.clone()).unwrap();
+        let callback = config.certificate_validation_callback().unwrap().clone();
+        let endpoint = config.destination().to_string();
+        let worker = std::thread::spawn(move || callback(b"certificate", &endpoint, "untrusted"));
+        let Outbound::Control(message) = receiver.recv_timeout(Duration::from_secs(2)).unwrap()
+        else {
+            panic!("expected certificate request")
+        };
+        let RdpControlMessage::CertificateRequest(request) = *message else {
+            panic!("expected certificate request")
+        };
+        gate.cancel();
+        assert!(!worker.join().unwrap());
+        assert!(!gate.respond_certificate(&request.request_id, RdpCertificateResponse::TrustOnce));
+    }
+
+    #[tokio::test]
+    async fn redirect_response_requires_exact_request_and_cancellation_releases_waiter() {
+        let gate = Arc::new(CertificateGate::default());
+        let request = nyaterm_remote_desktop::RdpRedirectRequest {
+            session_id: "session".into(),
+            request_id: "request".into(),
+            generation: 1,
+            hop: 1,
+            host: "target".into(),
+            port: 3389,
+            connect_hosts: Vec::new(),
+        };
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        *gate.redirect.lock().unwrap() = Some((request.clone(), sender));
+        let mut stale = request.clone();
+        stale.hop = 2;
+        assert!(!gate.respond_redirect(
+            &stale,
+            nyaterm_remote_desktop::RdpRedirectResponse::Ready { relay: None }
+        ));
+        assert!(gate.redirect.lock().unwrap().is_some());
+        gate.cancel();
+        assert!(receiver.await.is_err());
+        assert!(!gate.respond_redirect(
+            &request,
+            nyaterm_remote_desktop::RdpRedirectResponse::Ready { relay: None }
+        ));
+    }
 
     #[test]
     fn rgb_pixels_convert_to_bgra_bytes_with_an_opaque_alpha() {
@@ -2297,9 +2727,9 @@ mod tests {
         if let Ok(Outbound::Control(message)) = &unexpected
             && let RdpControlMessage::CertificateRequest(request) = message.as_ref()
         {
-            *gate.response.lock().unwrap() = Some((
-                request.request_id.clone(),
-                nyaterm_remote_desktop::RdpCertificateResponse::Reject,
+            assert!(gate.respond_certificate(
+                &request.request_id,
+                nyaterm_remote_desktop::RdpCertificateResponse::Reject
             ));
             gate.changed.notify_all();
         }
@@ -2323,9 +2753,9 @@ mod tests {
         };
         assert_eq!(request.host, "server.example");
         assert_eq!(request.port, 3389);
-        *gate.response.lock().unwrap() = Some((
-            request.request_id,
-            nyaterm_remote_desktop::RdpCertificateResponse::Reject,
+        assert!(gate.respond_certificate(
+            &request.request_id,
+            nyaterm_remote_desktop::RdpCertificateResponse::Reject
         ));
         gate.changed.notify_all();
         assert!(!worker.join().unwrap());

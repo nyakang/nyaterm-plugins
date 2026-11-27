@@ -36,6 +36,7 @@ fn client_hello() -> RdpControlMessage {
     RdpControlMessage::ClientHello {
         version: PROTOCOL_VERSION,
         frame_update_complete: true,
+        server_redirection: false,
     }
 }
 
@@ -48,6 +49,7 @@ fn assert_server_hello(message: RdpControlMessage) {
                 committed_unicode_text: true,
                 secure_attention: true,
                 frame_update_complete: true,
+                server_redirection: true,
             },
         }
     ));
@@ -390,6 +392,7 @@ fn repeated_hello_wrong_version_and_helper_only_messages_fail_closed() {
     assert_helper_rejects(vec![RdpControlMessage::ClientHello {
         version: PROTOCOL_VERSION - 1,
         frame_update_complete: false,
+        server_redirection: false,
     }]);
     assert_helper_rejects(vec![client_hello(), client_hello()]);
     for message in helper_only_messages() {
@@ -461,6 +464,7 @@ fn older_and_newer_helpers_are_explicitly_incompatible_with_version_thirteen() {
         assert_helper_rejects(vec![RdpControlMessage::ClientHello {
             version,
             frame_update_complete: false,
+            server_redirection: false,
         }]);
     }
     assert_helper_rejects(vec![RdpControlMessage::Ping { sequence: 1 }]);
@@ -481,10 +485,53 @@ fn mismatched_client_receives_actual_helper_version_before_exit() {
             &RdpControlMessage::ClientHello {
                 version,
                 frame_update_complete: false,
+                server_redirection: false,
             },
         );
         assert_server_hello(recv(&mut stdout));
         drop(stdin);
         assert!(!child.wait().unwrap().success());
     }
+}
+
+#[test]
+fn redirect_response_without_negotiation_is_rejected() {
+    assert_helper_rejects(vec![
+        client_hello(),
+        RdpControlMessage::RedirectResponse {
+            request: nyaterm_remote_desktop::RdpRedirectRequest {
+                session_id: "test-session".into(),
+                request_id: "redirect".into(),
+                generation: 1,
+                hop: 1,
+                host: "target.example".into(),
+                port: 3389,
+                connect_hosts: Vec::new(),
+            },
+            response: nyaterm_remote_desktop::RdpRedirectResponse::Ready { relay: None },
+        },
+    ]);
+}
+
+#[test]
+fn negotiated_redirection_keeps_ordinary_control_and_shutdown_working() {
+    let mut child = spawn_helper();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    send(
+        &mut stdin,
+        &RdpControlMessage::ClientHello {
+            version: PROTOCOL_VERSION,
+            frame_update_complete: false,
+            server_redirection: true,
+        },
+    );
+    assert_server_hello(recv(&mut stdout));
+    send(&mut stdin, &RdpControlMessage::Ping { sequence: 9 });
+    assert!(matches!(
+        recv(&mut stdout),
+        RdpControlMessage::Pong { sequence: 9 }
+    ));
+    drop(stdin);
+    assert!(child.wait().unwrap().success());
 }
