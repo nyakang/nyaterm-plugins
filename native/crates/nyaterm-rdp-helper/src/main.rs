@@ -41,6 +41,7 @@ use x509_cert::der::Decode as _;
 
 mod client_name;
 mod clipboard;
+mod connection_diagnostics;
 
 use client_name::resolve_client_name;
 use clipboard::ClipboardBridge;
@@ -241,6 +242,7 @@ fn validate_active_session_id(
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() {
+    connection_diagnostics::install();
     let provider_error = install_crypto_provider()
         .err()
         .map(|error| error.to_string());
@@ -1623,6 +1625,7 @@ async fn forward_output(
 ) {
     let mut desktop = DesktopOutputState::default();
     let mut connected = false;
+    let mut activated = false;
     let mut cursor_shape = CursorShape {
         shape_id: 0,
         width: 0,
@@ -1647,15 +1650,21 @@ async fn forward_output(
                             .reset(tokio::time::Instant::now() + connection_timeout);
                         continue;
                     }
+                    tracing::debug!(target: "nyaterm_rdp_phase", "Connection timeout");
+                    let message = if activated {
+                        format!(
+                            "RDP session activated, but the first desktop frame did not arrive within {} seconds",
+                            connection_timeout.as_secs()
+                        )
+                    } else {
+                        format!(
+                            "RDP security negotiation did not complete within {} seconds",
+                            connection_timeout.as_secs()
+                        )
+                    };
                     let _ = output_tx.send(Outbound::control(RdpControlMessage::Error {
                         session_id: session_id.clone(),
-                        error: RdpError::new(
-                            RdpErrorKind::Timeout,
-                            format!(
-                                "RDP security negotiation did not complete within {} seconds",
-                                connection_timeout.as_secs()
-                            ),
-                        ),
+                        error: RdpError::new(RdpErrorKind::Timeout, message),
                         fatal: true,
                     }));
                     // The negotiation stalled, so nothing is draining the bounded input
@@ -1674,7 +1683,9 @@ async fn forward_output(
         );
         let result: Result<(), ()> = match event {
             RdpOutputEvent::ServerRedirected { .. } => {
+                tracing::debug!(target: "nyaterm_rdp_phase", "Redirect approved");
                 connected = false;
+                activated = false;
                 connection_deadline
                     .as_mut()
                     .reset(tokio::time::Instant::now() + connection_timeout);
@@ -1687,6 +1698,8 @@ async fn forward_output(
                     .map_err(|_| ())
             }
             RdpOutputEvent::Connected | RdpOutputEvent::AutoReconnected => {
+                tracing::debug!(target: "nyaterm_rdp_phase", "Waiting for first frame");
+                activated = true;
                 // A new activation may have exactly the previous dimensions.
                 // Its next desktop update still starts a new framebuffer epoch.
                 desktop.connection_reset();
@@ -2968,6 +2981,35 @@ mod tests {
             error_chain(&nested),
             "[read frame] custom error, caused by: peer closed without notice"
         );
+    }
+
+    #[tokio::test]
+    async fn activated_session_without_pixels_reports_first_frame_timeout() {
+        let (rdp_output_tx, rdp_output_rx) = output_channel(1);
+        rdp_output_tx.try_send(RdpOutputEvent::Connected).unwrap();
+        let (input_tx, _) = RdpInputSender::channel(1);
+        let (output_tx, output_rx) = mpsc::sync_channel(1);
+        forward_output(
+            "session".to_string(),
+            rdp_output_rx,
+            output_tx,
+            input_tx,
+            Arc::new(CertificateGate::default()),
+            Duration::from_millis(10),
+            false,
+        )
+        .await;
+        let Outbound::Control(message) = output_rx.recv().unwrap() else {
+            panic!("expected a control message");
+        };
+        let RdpControlMessage::Error { error, fatal, .. } = *message else {
+            panic!("expected a timeout error");
+        };
+        assert_eq!(error.kind, RdpErrorKind::Timeout);
+        assert!(fatal);
+        assert!(error.message.contains("first desktop frame"));
+        assert!(!error.message.contains("security negotiation"));
+        drop(rdp_output_tx);
     }
 
     #[tokio::test]

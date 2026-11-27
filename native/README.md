@@ -28,6 +28,29 @@ The legacy bitmap-codec list is independent of GFX negotiation. Setting
 `NYATERM_RDP_METRICS=1` adds numeric IPC write/flush and output-queue wait timings
 to stderr without logging hosts, accounts, clipboard data or framebuffer pixels.
 
+RDP 1.2.2 supports GNOME remote-login handover through FreeRDP's enhanced
+server-redirection header and RDSTLS encrypted-password authentication.
+The redirected TLS certificate must exactly match the certificate supplied
+by the broker, and configured certificate rejection remains authoritative.
+RDSTLS authentication finishes before MCS; encrypted credentials are never
+sent as a normal Client Info password. The component uses rustls and retains
+IPC 13, relay approval and existing persisted data formats. On November 27,
+2026, a Windows client successfully connected to Ubuntu running GNOME Remote
+Desktop 50.2 and FreeRDP 3.32.1; RDSTLS handover and desktop frames were verified.
+
+FreeRDP's combined RDSTLS version 1/2 advertisement is accepted while the
+helper continues authenticating with version 1. A timeout after activation
+reports that the first desktop frame is missing rather than reporting an
+unfinished security negotiation.
+
+For connection troubleshooting, set `NYATERM_RDP_PHASE_LOG` to a writable file
+before launching the application. The helper appends only allowlisted phase
+names, its process ID and elapsed milliseconds; identities, credentials and
+protocol payloads are excluded. Logging stops when the file reaches 1 MiB;
+remove or rotate it manually before collecting another diagnostic run. A
+`dvc_capabilities_response_generated` milestone means the reply was encoded,
+not that the server received it.
+
 ## Development
 
 Run from this directory:
