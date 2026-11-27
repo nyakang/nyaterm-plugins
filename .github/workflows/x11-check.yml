@@ -18,7 +18,7 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 120
     env:
-      HOST_VERSION: ${{ inputs.host_version || ">=2.0.8, <3" }}
+      HOST_VERSION: ${{ inputs.host_version || '>=2.0.8, <3' }}
     defaults:
       run:
         working-directory: native
