@@ -701,6 +701,7 @@ mod tests {
         let control = encode_control(&RdpControlMessage::ClientHello {
             version: PROTOCOL_VERSION,
             frame_update_complete: true,
+            server_redirection: false,
         })
         .unwrap();
         let mut encoded = Vec::new();
@@ -713,6 +714,7 @@ mod tests {
             RdpControlMessage::ClientHello {
                 version: PROTOCOL_VERSION,
                 frame_update_complete: true,
+                server_redirection: false,
             }
         ));
 
@@ -745,6 +747,7 @@ mod tests {
                 committed_unicode_text: true,
                 secure_attention: true,
                 frame_update_complete: true,
+                server_redirection: false,
             },
         })
         .unwrap();
@@ -755,6 +758,7 @@ mod tests {
                     committed_unicode_text: true,
                     secure_attention: true,
                     frame_update_complete: true,
+                    server_redirection: false,
                 },
                 ..
             }
@@ -780,6 +784,7 @@ mod tests {
             RdpControlMessage::ClientHello {
                 version: 13,
                 frame_update_complete: false,
+                server_redirection: false,
             }
         ));
         let hello: RdpControlMessage = serde_json::from_str(
@@ -791,6 +796,7 @@ mod tests {
             RdpControlMessage::ServerHello {
                 capabilities: RdpServerCapabilities {
                     frame_update_complete: false,
+                    server_redirection: false,
                     ..
                 },
                 ..
@@ -819,6 +825,7 @@ mod tests {
         let client = encode_control(&RdpControlMessage::ClientHello {
             version: PROTOCOL_VERSION,
             frame_update_complete: true,
+            server_redirection: false,
         })
         .unwrap();
         assert!(matches!(
@@ -831,6 +838,7 @@ mod tests {
                 committed_unicode_text: true,
                 secure_attention: true,
                 frame_update_complete: true,
+                server_redirection: false,
             },
         })
         .unwrap();
@@ -1039,5 +1047,103 @@ mod tests {
         write_packet(&mut immediate, &packet).unwrap();
         assert_eq!(immediate.flushes, 1);
         assert_eq!(immediate.bytes.len() * 2, buffered.bytes.len());
+    }
+}
+
+#[cfg(test)]
+mod redirection_tests {
+    use super::{decode_control, encode_control};
+    use crate::relay::RelayEndpoint;
+    use crate::{
+        RdpControlMessage, RdpRedirectRequest, RdpRedirectResponse, RdpServerCapabilities,
+    };
+
+    #[test]
+    fn legacy_peers_do_not_opt_into_redirect_messages() {
+        let hello: RdpControlMessage =
+            serde_json::from_str(r#"{"ClientHello":{"version":13}}"#).unwrap();
+        assert!(matches!(
+            hello,
+            RdpControlMessage::ClientHello {
+                server_redirection: false,
+                ..
+            }
+        ));
+        let capabilities: RdpServerCapabilities =
+            serde_json::from_str(r#"{"committed_unicode_text":true,"secure_attention":true}"#)
+                .unwrap();
+        assert!(!capabilities.server_redirection);
+    }
+
+    #[test]
+    fn redirect_response_round_trip_preserves_exact_request_and_masks_token() {
+        let request = RdpRedirectRequest {
+            session_id: "session".into(),
+            request_id: "request".into(),
+            generation: 1,
+            hop: 1,
+            host: "2001:db8::1".into(),
+            port: 3389,
+            connect_hosts: Vec::new(),
+        };
+        assert!(request.validate().is_ok());
+        let response = RdpRedirectResponse::Ready {
+            relay: Some(RelayEndpoint {
+                address: "127.0.0.1:1234".parse().unwrap(),
+                token: "secret-token-that-is-32-bytes-long".into(),
+            }),
+        };
+        assert!(!format!("{response:?}").contains("secret-token"));
+        let packet = encode_control(&RdpControlMessage::RedirectResponse {
+            request: request.clone(),
+            response: response.clone(),
+        })
+        .unwrap();
+        let RdpControlMessage::RedirectResponse {
+            request: decoded,
+            response: decoded_response,
+        } = decode_control(&packet).unwrap()
+        else {
+            panic!("expected redirect response")
+        };
+        assert_eq!(decoded, request);
+        assert_eq!(decoded_response, response);
+    }
+
+    #[test]
+    fn redirect_target_rejects_invalid_port_hop_and_host() {
+        let request = RdpRedirectRequest {
+            session_id: "session".into(),
+            request_id: "request".into(),
+            generation: 1,
+            hop: 1,
+            host: "server".into(),
+            port: 3389,
+            connect_hosts: Vec::new(),
+        };
+        assert!(
+            RdpRedirectRequest {
+                port: 0,
+                ..request.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            RdpRedirectRequest {
+                hop: 9,
+                ..request.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            RdpRedirectRequest {
+                host: "bad\nhost".into(),
+                ..request
+            }
+            .validate()
+            .is_err()
+        );
     }
 }

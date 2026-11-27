@@ -59,6 +59,9 @@ pub struct RdpServerCapabilities {
     /// Ordered desktop submission boundaries, emitted only when the client opts in.
     #[serde(default)]
     pub frame_update_complete: bool,
+    /// Target-specific certificate and route coordination, enabled only by client opt-in.
+    #[serde(default)]
+    pub server_redirection: bool,
 }
 
 /// Static features implemented by a VNC helper for this IPC version.
@@ -589,6 +592,67 @@ pub enum RdpSessionState {
     Closed,
 }
 
+/// A target to authorize before the helper opens its next connection.
+/// See CONTRACT.rdp-redirection.md for correlation and compatibility rules.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RdpRedirectRequest {
+    pub session_id: String,
+    pub request_id: String,
+    pub generation: u64,
+    pub hop: u32,
+    pub host: String,
+    pub port: u16,
+    #[serde(default)]
+    pub connect_hosts: Vec<String>,
+}
+
+impl RdpRedirectRequest {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.session_id.is_empty()
+            || self.session_id.len() > 128
+            || self.request_id.is_empty()
+            || self.request_id.len() > 128
+            || self.generation == 0
+            || !(1..=8).contains(&self.hop)
+            || self.host.is_empty()
+            || self.host.len() > 253
+            || self
+                .host
+                .chars()
+                .any(|c| c.is_whitespace() || c.is_control())
+            || self.port == 0
+            || self.connect_hosts.len() > 16
+            || self
+                .connect_hosts
+                .iter()
+                .any(|host| !valid_redirect_host(host))
+            || !valid_redirect_host(&self.host)
+        {
+            return Err("invalid RDP redirection target");
+        }
+        Ok(())
+    }
+}
+
+fn valid_redirect_host(host: &str) -> bool {
+    !host.is_empty()
+        && host.len() <= 253
+        && (host.parse::<std::net::IpAddr>().is_ok()
+            || host
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_')))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RdpRedirectResponse {
+    Ready {
+        relay: Option<crate::relay::RelayEndpoint>,
+    },
+    Rejected {
+        message: String,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RdpCertificateRequest {
     pub request_id: String,
@@ -678,6 +742,7 @@ pub enum RdpRuntimeEvent {
         session_id: String,
         progress: RdpClipboardTransferProgress,
     },
+    RedirectRequest(RdpRedirectRequest),
     CertificateRequest(RdpCertificateRequest),
     Capability {
         session_id: String,
@@ -1066,6 +1131,8 @@ pub enum RdpControlMessage {
         /// Missing on legacy IPC 13 clients, which must not receive new messages.
         #[serde(default)]
         frame_update_complete: bool,
+        #[serde(default)]
+        server_redirection: bool,
     },
     ServerHello {
         version: u32,
@@ -1121,7 +1188,12 @@ pub enum RdpControlMessage {
         session_id: String,
         transfer_id: String,
     },
+    RedirectRequest(RdpRedirectRequest),
     CertificateRequest(RdpCertificateRequest),
+    RedirectResponse {
+        request: RdpRedirectRequest,
+        response: RdpRedirectResponse,
+    },
     CertificateResponse {
         request_id: String,
         response: RdpCertificateResponse,
