@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
-REVISION = "2edd0331433b871c334ff2da6e983f505e2311c4"
+REVISION = "d14e021790036475e2f676820ed96496b6d760e6"
 REPOSITORY = "https://github.com/nyakang/vcxsrv.git"
 TARGET = "x86_64-pc-windows-msvc"
 STAGING = ROOT / "target/x11-runtime"
@@ -20,7 +20,7 @@ RUNTIME_LAYOUT = 2
 def prepare(target: str) -> Path:
     if target != TARGET or sys.platform != "win32":
         raise ValueError("X11 runtime requires a Windows x64 MSVC build host")
-    for tool in ("MSBuild.exe", "win_bison.exe", "win_flex.exe", "perl.exe", "nasm.exe", "jom.exe", "gperf.exe", "gzip.exe"):
+    for tool in ("MSBuild.exe", "win_bison.exe", "win_flex.exe", "perl.exe", "nasm.exe", "jom.exe", "gperf.exe", "gzip.exe", "meson.exe", "ninja.exe"):
         if not shutil.which(tool):
             raise RuntimeError("Missing X11 build tool: " + tool)
     source = ROOT / "target/x11-source"
@@ -37,6 +37,10 @@ def prepare(target: str) -> Path:
     subprocess.run(["git", "checkout", "--detach", REVISION], cwd=source, check=True)
     env = os.environ.copy()
     env.update(MHMAKECONF=str(source), PYTHON3=sys.executable, IS64="1", CL=env.get("CL", "") + " /FS")
+    bash = Path(os.environ.get("NYATERM_BUILD_BASH", "C:/Program Files/Git/usr/bin/bash.exe"))
+    if not bash.is_file():
+        raise RuntimeError("Set NYATERM_BUILD_BASH to a native Git/MSYS Bash executable")
+    env["POSIX_SHELL"] = '"' + str(bash) + '"'
     jobs = str(min(os.cpu_count() or 2, 8))
     def run(command, directory=source):
         subprocess.run(command, cwd=directory, env=env, check=True)
@@ -47,11 +51,16 @@ def prepare(target: str) -> Path:
     run(["MSBuild.exe", "freetype/MSBuild.sln", "-t:Build", "-p:Configuration=Release", "-p:Platform=x64", "-m:" + jobs])
     openssl = source / "openssl/release64"
     openssl.mkdir(exist_ok=True)
-    configuration = dict(revision=REVISION, compiler=env.get("VCToolsVersion"), cl=env["CL"])
+    def openssl_tree(revision):
+        return subprocess.check_output(["git", "rev-parse", revision + ":openssl"], cwd=source, text=True).strip()
+    configuration = dict(source_tree=openssl_tree(REVISION), compiler=env.get("VCToolsVersion"), cl=env["CL"])
     configured = openssl / "nyaterm-configuration.json"
-    if not configured.is_file() or json.loads(configured.read_text()) != configuration:
+    previous = json.loads(configured.read_text()) if configured.is_file() else None
+    if previous and "revision" in previous:
+        previous["source_tree"] = openssl_tree(previous.pop("revision"))
+    if previous != configuration:
         run(["perl.exe", "../Configure", "VC-WIN64A", "--release"], openssl)
-        configured.write_text(json.dumps(configuration), encoding="utf-8")
+    configured.write_text(json.dumps(configuration), encoding="utf-8")
     run(["jom.exe", "/J" + jobs, "build_libs"], openssl)
     run(["nmake.exe", "VC-static"], source / "pthreads")
     run([str(source / "tools/mhmake/Release64/mhmake.exe"), "-P" + jobs, "-C", "xorg-server", "MAKESERVER=1"])
