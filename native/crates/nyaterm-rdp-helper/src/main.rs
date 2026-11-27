@@ -799,15 +799,29 @@ fn build_config(
                 certificate_gate.waiting.store(true, Ordering::Release);
             }
             let _guard = CertificateWaitGuard(certificate_gate.clone());
-            if certificate_output_tx
-                .send(Outbound::control(RdpControlMessage::CertificateRequest(
-                    request,
-                )))
-                .is_err()
-            {
-                return false;
-            }
             let deadline = std::time::Instant::now() + Duration::from_secs(120);
+            let mut message = Outbound::control(RdpControlMessage::CertificateRequest(request));
+            loop {
+                if std::time::Instant::now() >= deadline
+                    || certificate_gate
+                        .response
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .cancelled
+                {
+                    return false;
+                }
+                match certificate_output_tx.try_send(message) {
+                    Ok(()) => break,
+                    Err(mpsc::TrySendError::Disconnected(_)) => return false,
+                    Err(mpsc::TrySendError::Full(returned)) => {
+                        message = returned;
+                        // TLS invokes this synchronous callback outside the IPC dispatcher.
+                        // Bound backpressure here so shutdown can still release the verifier.
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                }
+            }
             let mut slot = certificate_gate
                 .response
                 .lock()
@@ -816,12 +830,12 @@ fn build_config(
                 if slot.cancelled {
                     break false;
                 }
-                if let Some(response) = slot.response.take() {
-                    break !matches!(response, RdpCertificateResponse::Reject);
-                }
                 let now = std::time::Instant::now();
                 if now >= deadline {
                     break false;
+                }
+                if let Some(response) = slot.response.take() {
+                    break !matches!(response, RdpCertificateResponse::Reject);
                 }
                 let waited = certificate_gate.changed.wait_timeout(slot, deadline - now);
                 slot = match waited {
@@ -2249,7 +2263,7 @@ mod tests {
     use std::num::NonZeroU16;
     use std::sync::atomic::Ordering;
     use std::sync::{Arc, mpsc};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use super::{
         CertificateGate, DesktopOutputState, DesktopPayload, Outbound, build_config,
@@ -2350,6 +2364,38 @@ mod tests {
         assert!(outcome.is_err());
         assert!(receiver.try_recv().is_err());
         assert!(gate.redirect.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn cancelling_certificate_delivery_releases_a_full_output_queue() {
+        // oracle: CONTRACT.rdp-redirection.md, cancellation bounds the entire certificate request.
+        let gate = Arc::new(CertificateGate::default());
+        let (output, _receiver) = mpsc::sync_channel(1);
+        output
+            .send(Outbound::control(RdpControlMessage::Pong { sequence: 1 }))
+            .unwrap();
+        let (config, _, _) =
+            build_config("session", &helper_config(), output, gate.clone()).unwrap();
+        let callback = config.certificate_validation_callback().unwrap().clone();
+        let endpoint = config.destination().to_string();
+        let (finished, completion) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            finished
+                .send(callback(b"certificate", &endpoint, "untrusted"))
+                .unwrap();
+        });
+        let started_deadline = Instant::now() + Duration::from_secs(2);
+        while !gate.waiting.load(Ordering::Acquire) {
+            assert!(
+                Instant::now() < started_deadline,
+                "certificate request never started"
+            );
+            std::thread::yield_now();
+        }
+        gate.cancel();
+        assert!(!completion.recv_timeout(Duration::from_secs(2)).unwrap());
+        worker.join().unwrap();
+        assert!(gate.response.lock().unwrap().pending.is_none());
     }
 
     #[test]
