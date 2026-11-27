@@ -173,6 +173,8 @@ runtime built by `scripts/release/prepare_x11.py`. Its source fork is
 `nyakang/vcxsrv`, branch `nyaterm`; `SOURCE.json` and `NYATERM.md` identify the
 exact source and loopback-listener patch. The component owns no framebuffer IPC.
 It starts one authenticated server per SSH session and defaults clipboard off.
+The package includes misc/scalable fonts; upstream's optional 75/100-DPI bitmap
+encoding collections are omitted to fit the existing 4096-file manifest limit.
 
 The X11 control pipe is bounded and versioned. Each server has a private
 authority file and a kill-on-close Job Object; EOF, Stop and helper death clean

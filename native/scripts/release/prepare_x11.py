@@ -67,7 +67,11 @@ def prepare(target: str) -> Path:
     for name in ("xkbdata", "locale", "bitmaps", "fonts"):
         path = source / "xorg-server" / name
         if path.is_dir():
-            shutil.copytree(path, runtime / name, dirs_exist_ok=True)
+            # Upstream makes bitmap fonts optional. Keep misc/scalable fonts,
+            # but omit the thousands of legacy 75/100-DPI encoding variants to
+            # stay within the existing signed-manifest file-count contract.
+            ignore = shutil.ignore_patterns("75dpi", "100dpi") if name == "fonts" else None
+            shutil.copytree(path, runtime / name, dirs_exist_ok=True, ignore=ignore)
     for name in ("XKeysymDB", "XtErrorDB", "font-dirs"):
         path = source / "xorg-server" / name
         if path.is_file(): shutil.copy2(path, runtime / name)
