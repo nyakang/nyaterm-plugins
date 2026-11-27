@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
-REVISION = "d14e021790036475e2f676820ed96496b6d760e6"
+REVISION = "d31ed5c652303c2be21d5b7db4a50e055a021edc"
 REPOSITORY = "https://github.com/nyakang/vcxsrv.git"
 TARGET = "x86_64-pc-windows-msvc"
 STAGING = ROOT / "target/x11-runtime"
