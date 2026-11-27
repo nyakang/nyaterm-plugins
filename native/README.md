@@ -37,6 +37,19 @@ sent as a normal Client Info password. The component uses rustls and retains
 IPC 13, relay approval and existing persisted data formats. Live GNOME
 interoperability remains a separate acceptance check.
 
+FreeRDP's combined RDSTLS version 1/2 advertisement is accepted while the
+helper continues authenticating with version 1. A timeout after activation
+reports that the first desktop frame is missing rather than reporting an
+unfinished security negotiation.
+
+For connection troubleshooting, set `NYATERM_RDP_PHASE_LOG` to a writable file
+before launching the application. The helper appends only allowlisted phase
+names, its process ID and elapsed milliseconds; identities, credentials and
+protocol payloads are excluded. Logging stops when the file reaches 1 MiB;
+remove or rotate it manually before collecting another diagnostic run. A
+`dvc_capabilities_response_generated` milestone means the reply was encoded,
+not that the server received it.
+
 ## Development
 
 Run from this directory:
