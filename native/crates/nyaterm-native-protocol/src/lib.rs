@@ -1,4 +1,5 @@
 //! Bounded, versioned contracts shared by the application and native helpers.
+pub mod clipboard;
 pub mod protocol;
 pub use protocol::{
     CommittedTextError, CursorPosition, CursorShape, CursorVisibility, MAX_COMMITTED_TEXT_BYTES,

@@ -51,6 +51,38 @@ remove or rotate it manually before collecting another diagnostic run. A
 `dvc_capabilities_response_generated` milestone means the reply was encoded,
 not that the server received it.
 
+## RDP clipboard ownership (1.2.3)
+
+IPC 13 adds opt-in `managed_clipboard` fields to ClientHello and server
+capabilities. Both default to false. Only negotiated peers exchange the managed
+clipboard commands/events. Without client opt-in the helper disables clipboard
+redirection and emits a nonfatal update notice; a new application similarly
+turns off the ephemeral clipboard setting when connecting to an older helper.
+Saved connection settings and backup formats do not change.
+
+The application owns one persistent system clipboard connection, observes local
+text/file changes and grants a session an authorization epoch and private cache
+root. The helper never accesses the system clipboard. It accepts snapshots only
+for the active epoch, returns Started/Ready events tagged with that epoch and
+request, and sends file paths relative to the application-provided cache root.
+Local snapshot scanning runs on a bounded worker; revocation is not queued
+behind a directory scan. Completed file caches survive helper shutdown so a
+local paste can finish. The application validates paths, checks clipboard
+freshness, publishes content and reports transfer completion. Partial downloads
+are cancelled on revocation; late stream responses cannot fail a newer transfer.
+
+Drain access permits an existing remote download to finish after Alt+Tab, but
+starts no new copies. Switching sessions or locking the application revokes the
+epoch. The application must recheck both epoch and local clipboard contents
+before publication, including after cache validation. A missing format response
+reports a nonfatal timeout and requires manual reconnect if it never arrives;
+reusing the outstanding slot would misidentify a late response.
+
+Validation: Linux protocol/state tests and helper lifecycle tests cover legacy
+handshakes, revoked requests, drain access, repeated text/file transitions,
+retained caches and stale chunks. Windows/macOS and live Windows RDP clipboard
+interoperability require platform smoke testing before component publication.
+
 ## Development
 
 Run from this directory:

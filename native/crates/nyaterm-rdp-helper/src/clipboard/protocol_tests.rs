@@ -19,6 +19,7 @@ use nyaterm_remote_desktop::RdpControlMessage;
 use super::files::{build_local_snapshot, to_filetime};
 use super::{ClipboardBridge, ClipboardInput};
 use crate::Outbound;
+use nyaterm_remote_desktop::clipboard::{ClipboardAccess, ClipboardContent, ClipboardEvent};
 
 struct ProtocolHarness {
     bridge: Arc<ClipboardBridge>,
@@ -37,8 +38,9 @@ impl ProtocolHarness {
     }
 
     fn with_file_capability(file_enabled: bool) -> Self {
-        let (output_tx, output) = mpsc::sync_channel(1);
+        let (output_tx, output) = mpsc::sync_channel(32);
         let bridge = ClipboardBridge::new("clipboard-test".into(), output_tx, file_enabled);
+        bridge.managed.lock().unwrap().access = ClipboardAccess::Active;
         let (sender, messages) = mpsc::channel();
         bridge.state.lock().unwrap().input = Some(ClipboardInput::Test(sender));
         let client = bridge.cliprdr_client();
@@ -52,12 +54,25 @@ impl ProtocolHarness {
 
     fn receive(&mut self, pdu: ClipboardPdu<'_>) -> Vec<Vec<u8>> {
         let bytes = encode_vec(&pdu).unwrap();
-        self.client
+        let result = self
+            .client
             .process(&bytes)
             .unwrap()
             .into_iter()
             .map(|message| message.encode_unframed_pdu().unwrap())
-            .collect()
+            .collect();
+        if matches!(pdu, ClipboardPdu::FormatList(_))
+            && let Ok(Outbound::Control(message)) = self.output.try_recv()
+        {
+            assert!(matches!(
+                *message,
+                RdpControlMessage::ManagedClipboardEvent {
+                    event: ClipboardEvent::Started { .. },
+                    ..
+                }
+            ));
+        }
+        result
     }
 
     fn outgoing(&mut self) -> Vec<Vec<u8>> {
@@ -255,8 +270,14 @@ fn remote_copy_is_delivered_over_ipc_and_does_not_disable_later_local_copies() {
     let Outbound::Control(message) = harness.output.try_recv().unwrap() else {
         panic!("expected a control message");
     };
-    let RdpControlMessage::Clipboard {
-        text, generation, ..
+    let RdpControlMessage::ManagedClipboardEvent {
+        event:
+            ClipboardEvent::Ready {
+                content: ClipboardContent::Text(text),
+                request: generation,
+                ..
+            },
+        ..
     } = *message
     else {
         panic!("expected IPC clipboard event");
@@ -495,7 +516,15 @@ async fn text_only_timeouts_are_reported_while_the_helper_waits_for_control() {
     let Outbound::Control(message) = harness.output.try_recv().unwrap() else {
         panic!("expected a control message");
     };
-    let RdpControlMessage::Clipboard { text, .. } = *message else {
+    let RdpControlMessage::ManagedClipboardEvent {
+        event:
+            ClipboardEvent::Ready {
+                content: ClipboardContent::Text(text),
+                ..
+            },
+        ..
+    } = *message
+    else {
         panic!("expected the current remote text");
     };
     assert_eq!(text, "current remote text");
