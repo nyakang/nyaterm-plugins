@@ -214,3 +214,38 @@ fn cancellation_renewal_keeps_the_private_cache_directory() {
         Some(temp.path())
     );
 }
+
+#[test]
+fn remote_copy_carries_the_last_observed_local_revision_without_echoing_publications() {
+    let (bridge, messages, output) = bridge();
+    let temp = tempfile::tempdir().unwrap();
+    authorize(&bridge, 1, ClipboardAccess::Active, temp.path());
+    bridge
+        .command(ClipboardCommand::Observed {
+            epoch: 1,
+            revision: 7,
+        })
+        .unwrap();
+    assert!(
+        messages.try_recv().is_err(),
+        "observations must not announce a local copy"
+    );
+    let mut backend = TextClipboardBackend {
+        bridge: bridge.clone(),
+    };
+    backend.on_remote_copy(&[ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT)]);
+    let Outbound::Control(message) = output.try_recv().unwrap() else {
+        panic!("control");
+    };
+    assert!(matches!(
+        *message,
+        RdpControlMessage::ManagedClipboardEvent {
+            event: ClipboardEvent::Started {
+                epoch: 1,
+                revision: 7,
+                ..
+            },
+            ..
+        }
+    ));
+}

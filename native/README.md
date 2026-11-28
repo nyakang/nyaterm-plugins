@@ -64,8 +64,10 @@ The application owns one persistent system clipboard connection, observes local
 text/file changes and grants a session an authorization epoch and private cache
 root. The helper never accesses the system clipboard. It accepts snapshots only
 for the active epoch, returns Started/Ready events tagged with that epoch and
-request, and sends file paths relative to the application-provided cache root.
-Local snapshot scanning runs on a bounded worker; revocation is not queued
+request plus the last observed local clipboard revision, and sends file paths relative to the application-provided cache root.
+The application acknowledges remote publications using Observed commands without
+echoing their contents; delayed Started notifications cannot rebase onto a newer
+local copy. Local snapshot scanning runs on a bounded worker; revocation is not queued
 behind a directory scan. Completed file caches survive helper shutdown so a
 local paste can finish. The application validates paths, checks clipboard
 freshness, publishes content and reports transfer completion. Partial downloads

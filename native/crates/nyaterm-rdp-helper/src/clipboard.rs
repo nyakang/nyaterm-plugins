@@ -252,7 +252,7 @@ impl ClipboardBridge {
     }
 
     pub(super) fn enqueue(self: &Arc<Self>, command: ClipboardCommand) -> anyhow::Result<()> {
-        if matches!(command, ClipboardCommand::Authorize { .. }) {
+        if !matches!(command, ClipboardCommand::Snapshot { .. }) {
             return self.command(command);
         }
         let mut commands = self.commands.lock().unwrap_or_else(|p| p.into_inner());
@@ -333,6 +333,11 @@ impl ClipboardBridge {
             return Ok(());
         }
         match command {
+            ClipboardCommand::Observed { epoch, revision } => {
+                if epoch == state.epoch && state.access != ClipboardAccess::Disabled {
+                    state.revision = state.revision.max(revision);
+                }
+            }
             ClipboardCommand::Authorize {
                 epoch,
                 access,
@@ -653,6 +658,7 @@ impl CliprdrBackend for TextClipboardBackend {
         self.bridge.emit(ClipboardEvent::Started {
             epoch: state.epoch,
             request: state.request,
+            revision: state.revision,
         });
         let file_format = self
             .bridge

@@ -231,6 +231,7 @@ fn helper_only_messages() -> Vec<RdpControlMessage> {
             event: nyaterm_remote_desktop::clipboard::ClipboardEvent::Started {
                 epoch: 1,
                 request: 1,
+                revision: 1,
             },
         },
         RdpControlMessage::ServerHello {

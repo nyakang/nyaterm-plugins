@@ -28,6 +28,8 @@ impl std::fmt::Debug for ClipboardContent {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub enum ClipboardCommand {
+    /// A remote publication changed the local clipboard without echoing it back.
+    Observed { epoch: u64, revision: u64 },
     Authorize {
         epoch: u64,
         access: ClipboardAccess,
@@ -55,6 +57,7 @@ pub enum ClipboardEvent {
     Started {
         epoch: u64,
         request: u64,
+        revision: u64,
     },
     Ready {
         epoch: u64,
