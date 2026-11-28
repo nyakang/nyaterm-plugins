@@ -78,14 +78,25 @@ pub(super) struct FileState {
     current: Option<Arc<LocalFileSnapshot>>,
     locked: HashMap<u32, Arc<LocalFileSnapshot>>,
     pub remote: Option<RemoteTransfer>,
-    completed_root: Option<PathBuf>,
-    completed_hash: Option<u64>,
     pub last_local_hash: Option<u64>,
     next_stream_id: u32,
     closed: bool,
+    pub cache_directory: Option<PathBuf>,
 }
 
 impl FileState {
+    pub fn current_descriptors(&self) -> Option<Vec<FileDescriptor>> {
+        self.current
+            .as_ref()
+            .map(|snapshot| snapshot.descriptors.clone())
+    }
+
+    pub fn clear_local(&mut self) {
+        self.current = None;
+        self.locked.clear();
+        self.last_local_hash = None;
+    }
+
     pub fn set_local_snapshot(
         &mut self,
         snapshot: LocalFileSnapshot,
@@ -95,17 +106,6 @@ impl FileState {
         self.current = Some(Arc::new(snapshot));
         self.last_local_hash = Some(hash);
         descriptors
-    }
-
-    pub fn is_remote_clipboard(&self, hash: u64) -> bool {
-        self.completed_hash == Some(hash)
-    }
-
-    pub fn release_completed(&mut self) {
-        if let Some(root) = self.completed_root.take() {
-            let _ = fs::remove_dir_all(root);
-        }
-        self.completed_hash = None;
     }
 
     pub fn lock(&mut self, id: LockDataId) {
@@ -142,7 +142,11 @@ impl FileState {
         }
         self.cancel_remote();
         let id = uuid::Uuid::new_v4().to_string();
-        let root = cache_root().join(&id);
+        let root = self
+            .cache_directory
+            .clone()
+            .unwrap_or_else(cache_root)
+            .join(&id);
         let prepared = prepare_remote_files(descriptors, &root)?;
         fs::create_dir_all(&root)
             .map_err(|error| format!("failed to create clipboard cache: {error}"))?;
@@ -250,6 +254,15 @@ impl FileState {
                 completed: false,
             });
         };
+        // A cancelled generation can still receive in-flight range responses.
+        // Its stream IDs must not fail a newer transfer.
+        if !transfer.active.contains_key(&response.stream_id()) {
+            self.remote = Some(transfer);
+            return Ok(RemoteUpdate {
+                requests: Vec::new(),
+                completed: false,
+            });
+        }
         let result = (|| -> Result<RemoteUpdate, String> {
             if response.is_error() {
                 return Err("remote rejected clipboard file request".to_string());
@@ -333,7 +346,7 @@ impl FileState {
         }
     }
 
-    pub fn complete_remote(&mut self) -> Result<(), String> {
+    pub fn complete_remote(&mut self) -> Result<(String, Vec<PathBuf>), String> {
         let transfer = self
             .remote
             .take()
@@ -342,15 +355,19 @@ impl FileState {
             let _ = fs::remove_dir_all(&transfer.root);
             return Err("clipboard byte count did not match declared size".to_string());
         }
-        if let Err(error) = write_clipboard_paths(&transfer.clipboard_paths) {
-            let _ = fs::remove_dir_all(&transfer.root);
-            return Err(error);
-        }
-        self.release_completed();
-        self.completed_hash = Some(file_list_fingerprint(&transfer.clipboard_paths));
-        self.last_local_hash = self.completed_hash;
-        self.completed_root = Some(transfer.root);
-        Ok(())
+        // The application owns publication and cache retention. Never delete a
+        // completed download while a local paste target may still be reading it.
+        let root = self.cache_directory.clone().unwrap_or_else(cache_root);
+        let paths = transfer
+            .clipboard_paths
+            .iter()
+            .map(|path| {
+                path.strip_prefix(&root)
+                    .map(Path::to_path_buf)
+                    .map_err(|_| "clipboard cache path escaped its root".to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((transfer.id, paths))
     }
 
     pub fn cancel_remote(&mut self) -> Option<String> {
@@ -407,23 +424,6 @@ impl FileState {
         self.cancel_remote();
         self.locked.clear();
     }
-}
-
-pub(super) fn read_clipboard_paths() -> Option<Vec<PathBuf>> {
-    arboard::Clipboard::new().ok()?.get().file_list().ok()
-}
-
-fn write_clipboard_paths(paths: &[PathBuf]) -> Result<(), String> {
-    let mut clipboard = arboard::Clipboard::new().map_err(|error| error.to_string())?;
-    // arboard's file-list setter only writes CF_HDROP; it does not empty the
-    // clipboard. Explorer's file data object from the previous local copy then
-    // stays on the OLE clipboard and paste targets keep using the old files,
-    // even though CF_HDROP already points at the new ones.
-    clipboard.clear().map_err(|error| error.to_string())?;
-    clipboard
-        .set()
-        .file_list(paths)
-        .map_err(|error| error.to_string())
 }
 
 pub(super) fn file_list_fingerprint(paths: &[PathBuf]) -> u64 {

@@ -699,6 +699,7 @@ mod tests {
     #[test]
     fn round_trips_partial_control_and_binary_frame_packets() {
         let control = encode_control(&RdpControlMessage::ClientHello {
+            managed_clipboard: true,
             version: PROTOCOL_VERSION,
             frame_update_complete: true,
             server_redirection: false,
@@ -712,6 +713,7 @@ mod tests {
         assert!(matches!(
             decode_control(&packets[0]).unwrap(),
             RdpControlMessage::ClientHello {
+                managed_clipboard: true,
                 version: PROTOCOL_VERSION,
                 frame_update_complete: true,
                 server_redirection: false,
@@ -744,6 +746,7 @@ mod tests {
         let hello = encode_control(&RdpControlMessage::ServerHello {
             version: PROTOCOL_VERSION,
             capabilities: RdpServerCapabilities {
+                managed_clipboard: true,
                 committed_unicode_text: true,
                 secure_attention: true,
                 frame_update_complete: true,
@@ -755,6 +758,7 @@ mod tests {
             decode_control(&hello).unwrap(),
             RdpControlMessage::ServerHello {
                 capabilities: RdpServerCapabilities {
+                    managed_clipboard: true,
                     committed_unicode_text: true,
                     secure_attention: true,
                     frame_update_complete: true,
@@ -782,6 +786,7 @@ mod tests {
         assert!(matches!(
             hello,
             RdpControlMessage::ClientHello {
+                managed_clipboard: false,
                 version: 13,
                 frame_update_complete: false,
                 server_redirection: false,
@@ -823,6 +828,7 @@ mod tests {
         }
 
         let client = encode_control(&RdpControlMessage::ClientHello {
+            managed_clipboard: true,
             version: PROTOCOL_VERSION,
             frame_update_complete: true,
             server_redirection: false,
@@ -835,6 +841,7 @@ mod tests {
         let server = encode_control(&RdpControlMessage::ServerHello {
             version: PROTOCOL_VERSION,
             capabilities: RdpServerCapabilities {
+                managed_clipboard: true,
                 committed_unicode_text: true,
                 secure_attention: true,
                 frame_update_complete: true,

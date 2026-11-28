@@ -205,6 +205,7 @@ fn validate_control_phase(message: &RdpControlMessage, hello_received: bool) -> 
         | RdpControlMessage::DesktopReset { .. }
         | RdpControlMessage::FrameUpdateComplete { .. }
         | RdpControlMessage::State { .. }
+        | RdpControlMessage::ManagedClipboardEvent { .. }
         | RdpControlMessage::ClipboardTransfer { .. }
         | RdpControlMessage::RedirectRequest(_)
         | RdpControlMessage::CertificateRequest(_)
@@ -217,6 +218,7 @@ fn validate_control_phase(message: &RdpControlMessage, hello_received: bool) -> 
         | RdpControlMessage::Input { .. }
         | RdpControlMessage::SecureAttention { .. }
         | RdpControlMessage::Resize { .. }
+        | RdpControlMessage::ManagedClipboard { .. }
         | RdpControlMessage::Clipboard { .. }
         | RdpControlMessage::ClipboardTransferCancel { .. }
         | RdpControlMessage::RedirectResponse { .. }
@@ -302,6 +304,7 @@ async fn run(provider_error: Option<String>) -> anyhow::Result<()> {
     let mut clipboard_bridge = None;
     let mut hello_received = false;
     let mut frame_update_complete = false;
+    let mut managed_clipboard = false;
     let mut active_session_id: Option<String> = None;
     let mut clipboard_tick = tokio::time::interval(CLIPBOARD_TIMEOUT_CHECK_INTERVAL);
     clipboard_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -320,6 +323,7 @@ async fn run(provider_error: Option<String>) -> anyhow::Result<()> {
                 send_control(&output_tx, RdpControlMessage::Pong { sequence })?;
             }
             RdpControlMessage::ClientHello {
+                managed_clipboard: requested_clipboard,
                 version,
                 frame_update_complete: requested_boundaries,
                 server_redirection: requested_redirection,
@@ -329,6 +333,7 @@ async fn run(provider_error: Option<String>) -> anyhow::Result<()> {
                     RdpControlMessage::ServerHello {
                         version: PROTOCOL_VERSION,
                         capabilities: RdpServerCapabilities {
+                            managed_clipboard: true,
                             committed_unicode_text: true,
                             secure_attention: true,
                             frame_update_complete: true,
@@ -349,11 +354,25 @@ async fn run(provider_error: Option<String>) -> anyhow::Result<()> {
                 }
                 hello_received = true;
                 frame_update_complete = requested_boundaries;
+                managed_clipboard = requested_clipboard;
                 certificate_gate
                     .redirection_enabled
                     .store(requested_redirection, Ordering::Release);
             }
-            RdpControlMessage::Connect { session_id, config } => {
+            RdpControlMessage::Connect {
+                session_id,
+                mut config,
+            } => {
+                if !managed_clipboard && config.redirection.clipboard {
+                    config.redirection.clipboard = false;
+                    send_error(
+                        &output_tx,
+                        &session_id,
+                        RdpErrorKind::Clipboard,
+                        "Clipboard disabled: update the application for managed clipboard support",
+                        false,
+                    )?;
+                }
                 if config.backend != nyaterm_remote_desktop::RdpBackend::Builtin {
                     send_error(
                         &output_tx,
@@ -533,9 +552,28 @@ async fn run(provider_error: Option<String>) -> anyhow::Result<()> {
             } => {
                 certificate_gate.respond_certificate(&request_id, response);
             }
+            RdpControlMessage::ManagedClipboard {
+                session_id,
+                command,
+            } => {
+                validate_active_session_id(active_session_id.as_deref(), &session_id)?;
+                anyhow::ensure!(managed_clipboard, "Managed clipboard was not negotiated");
+                if let Some(bridge) = clipboard_bridge.as_ref() {
+                    let result = bridge.enqueue(command);
+                    if let Err(error) = result {
+                        send_error(
+                            &output_tx,
+                            &session_id,
+                            RdpErrorKind::Clipboard,
+                            &error.to_string(),
+                            false,
+                        )?;
+                    }
+                }
+            }
             RdpControlMessage::Clipboard {
                 session_id,
-                text,
+                text: _,
                 generation: _,
             } => {
                 validate_active_session_id(active_session_id.as_deref(), &session_id)?;
@@ -545,15 +583,7 @@ async fn run(provider_error: Option<String>) -> anyhow::Result<()> {
                 let Some(bridge) = clipboard_bridge.as_ref() else {
                     continue;
                 };
-                if let Err(error) = bridge.set_local_text(text) {
-                    send_error(
-                        &output_tx,
-                        &session_id,
-                        RdpErrorKind::Clipboard,
-                        &error.to_string(),
-                        false,
-                    )?;
-                }
+                let _ = bridge; // Legacy payloads cannot bypass managed authorization.
             }
             RdpControlMessage::ClipboardTransferCancel {
                 session_id,
@@ -610,6 +640,7 @@ async fn run(provider_error: Option<String>) -> anyhow::Result<()> {
             | RdpControlMessage::DesktopReset { .. }
             | RdpControlMessage::FrameUpdateComplete { .. }
             | RdpControlMessage::State { .. }
+            | RdpControlMessage::ManagedClipboardEvent { .. }
             | RdpControlMessage::ClipboardTransfer { .. }
             | RdpControlMessage::RedirectRequest(_)
             | RdpControlMessage::CertificateRequest(_)

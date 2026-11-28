@@ -1,4 +1,7 @@
 const MAX_CLIPBOARD_TEXT_BYTES: usize = 4 * 1024 * 1024;
+use nyaterm_remote_desktop::clipboard::{
+    ClipboardAccess, ClipboardCommand, ClipboardContent, ClipboardEvent,
+};
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -23,7 +26,7 @@ mod fetch;
 mod files;
 
 use fetch::{FetchKind, FetchReply, RemoteFetchState};
-use files::{FileState, build_local_snapshot, file_list_fingerprint, read_clipboard_paths};
+use files::{FileState, build_local_snapshot, file_list_fingerprint};
 
 const REMOTE_FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -37,13 +40,33 @@ pub(super) struct ClipboardBridge {
     file_available: AtomicBool,
     watcher_started: AtomicBool,
     shutdown: AtomicBool,
+    managed: Mutex<ManagedState>,
+    operations: Mutex<()>,
+    commands: Mutex<Option<mpsc::SyncSender<ClipboardCommand>>>,
+}
+
+struct ManagedState {
+    epoch: u64,
+    access: ClipboardAccess,
+    request: u64,
+    revision: u64,
+}
+impl Default for ManagedState {
+    fn default() -> Self {
+        Self {
+            epoch: 0,
+            access: ClipboardAccess::Disabled,
+            request: 0,
+            revision: 0,
+        }
+    }
 }
 
 #[derive(Default)]
 struct ClipboardState {
     local_text: String,
+    local_files: bool,
     input: Option<ClipboardInput>,
-    generation: u64,
 }
 
 #[derive(Clone)]
@@ -90,6 +113,9 @@ impl ClipboardBridge {
             file_available: AtomicBool::new(false),
             watcher_started: AtomicBool::new(false),
             shutdown: AtomicBool::new(false),
+            managed: Mutex::new(ManagedState::default()),
+            operations: Mutex::new(()),
+            commands: Mutex::new(None),
         })
     }
 
@@ -110,14 +136,10 @@ impl ClipboardBridge {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             state.local_text = text;
+            state.local_files = false;
             state.input.clone()
         };
         if let Some(sender) = sender {
-            if self.file_available.load(Ordering::SeqCst)
-                && read_clipboard_paths().is_some_and(|paths| !paths.is_empty())
-            {
-                return Ok(());
-            }
             sender.send_clipboard(ClipboardMessage::SendInitiateCopy(vec![
                 ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT),
             ]))?;
@@ -192,25 +214,232 @@ impl ClipboardBridge {
         }
     }
 
+    fn emit(&self, event: ClipboardEvent) -> bool {
+        let message = RdpControlMessage::ManagedClipboardEvent {
+            session_id: self.session_id.clone(),
+            event,
+        };
+        // Never let an oversized clipboard payload terminate the IPC writer.
+        if nyaterm_remote_desktop::encode_control(&message).is_err() {
+            let _ = self
+                .output_tx
+                .send(Outbound::control(RdpControlMessage::Error {
+                    session_id: self.session_id.clone(),
+                    error: nyaterm_remote_desktop::RdpError::new(
+                        nyaterm_remote_desktop::RdpErrorKind::Clipboard,
+                        "Clipboard contents exceed the IPC size limit",
+                    ),
+                    fatal: false,
+                }));
+            return false;
+        }
+        self.output_tx.send(Outbound::control(message)).is_ok()
+    }
+
     fn publish_remote_text(&self, text: String) {
         if text.len() > MAX_CLIPBOARD_TEXT_BYTES {
             return;
         }
-        let generation = {
-            let mut state = self
-                .state
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            state.generation = state.generation.wrapping_add(1);
-            state.generation
+        let state = self.managed.lock().unwrap_or_else(|p| p.into_inner());
+        if state.access != ClipboardAccess::Disabled {
+            self.emit(ClipboardEvent::Ready {
+                epoch: state.epoch,
+                request: state.request,
+                content: ClipboardContent::Text(text),
+                transfer_id: None,
+            });
+        }
+    }
+
+    pub(super) fn enqueue(self: &Arc<Self>, command: ClipboardCommand) -> anyhow::Result<()> {
+        if !matches!(command, ClipboardCommand::Snapshot { .. }) {
+            return self.command(command);
+        }
+        let mut commands = self.commands.lock().unwrap_or_else(|p| p.into_inner());
+        if commands.is_none() {
+            let (tx, rx) = mpsc::sync_channel(8);
+            let bridge = Arc::clone(self);
+            std::thread::Builder::new()
+                .name("rdp-clipboard-snapshots".into())
+                .spawn(move || {
+                    while let Ok(command) = rx.recv() {
+                        if bridge.shutdown.load(Ordering::SeqCst) {
+                            break;
+                        }
+                        let ClipboardCommand::Snapshot {
+                            epoch, revision, ..
+                        } = &command
+                        else {
+                            continue;
+                        };
+                        let (epoch, revision) = (*epoch, *revision);
+                        let result = bridge.command(command);
+                        bridge.emit(ClipboardEvent::Applied {
+                            epoch,
+                            revision,
+                            accepted: result.is_ok(),
+                        });
+                        if let Err(error) = result {
+                            let _ = bridge.output_tx.send(Outbound::control(
+                                RdpControlMessage::Error {
+                                    session_id: bridge.session_id.clone(),
+                                    error: nyaterm_remote_desktop::RdpError::new(
+                                        nyaterm_remote_desktop::RdpErrorKind::Clipboard,
+                                        error.to_string(),
+                                    ),
+                                    fatal: false,
+                                },
+                            ));
+                        }
+                    }
+                })?;
+            *commands = Some(tx);
+        }
+        commands
+            .as_ref()
+            .expect("clipboard command queue")
+            .try_send(command)
+            .map_err(|_| anyhow::anyhow!("Clipboard snapshot queue is full or closed"))
+    }
+
+    pub(super) fn command(&self, command: ClipboardCommand) -> anyhow::Result<()> {
+        // Directory scanning can be slow. Do it on the bounded snapshot worker,
+        // outside the protocol/authorization gate, and revalidate before using it.
+        let prepared = if let ClipboardCommand::Snapshot {
+            epoch,
+            content: ClipboardContent::Files(paths),
+            ..
+        } = &command
+        {
+            let state = self.managed.lock().unwrap_or_else(|p| p.into_inner());
+            if *epoch != state.epoch || state.access != ClipboardAccess::Active {
+                return Ok(());
+            }
+            let request = state.request;
+            drop(state);
+            Some((
+                build_local_snapshot(paths).map_err(anyhow::Error::msg)?,
+                request,
+            ))
+        } else {
+            None
         };
-        let _ = self
-            .output_tx
-            .send(Outbound::control(RdpControlMessage::Clipboard {
-                session_id: self.session_id.clone(),
-                text,
-                generation,
-            }));
+        let _operation = self.operations.lock().unwrap_or_else(|p| p.into_inner());
+        let mut state = self.managed.lock().unwrap_or_else(|p| p.into_inner());
+        if prepared
+            .as_ref()
+            .is_some_and(|(_, request)| *request != state.request)
+        {
+            return Ok(());
+        }
+        match command {
+            ClipboardCommand::Observed { epoch, revision } => {
+                if epoch == state.epoch && state.access != ClipboardAccess::Disabled {
+                    state.revision = state.revision.max(revision);
+                }
+            }
+            ClipboardCommand::Authorize {
+                epoch,
+                access,
+                cache_root,
+            } => {
+                if epoch < state.epoch {
+                    return Ok(());
+                }
+                if access != ClipboardAccess::Disabled && !cache_root.is_absolute() {
+                    anyhow::bail!("clipboard cache root must be absolute");
+                }
+                if epoch != state.epoch || access == ClipboardAccess::Disabled {
+                    self.cancel_remote("Clipboard ownership changed");
+                    self.queue_remote_fetch(None);
+                    state.revision = 0;
+                    state.request = state.request.wrapping_add(1);
+                    // Revocation also prevents serving old local file snapshots.
+                    let mut files = self.files.lock().unwrap_or_else(|p| p.into_inner());
+                    files.clear_local();
+                    let mut clipboard = self.state.lock().unwrap_or_else(|p| p.into_inner());
+                    clipboard.local_text.clear();
+                    clipboard.local_files = false;
+                    files.cache_directory = Some(cache_root.clone());
+                }
+                if access != ClipboardAccess::Disabled {
+                    self.files
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .cache_directory = Some(cache_root);
+                }
+                state.epoch = epoch;
+                state.access = access;
+            }
+            ClipboardCommand::Snapshot {
+                epoch,
+                revision,
+                content,
+            } => {
+                if epoch != state.epoch
+                    || state.access != ClipboardAccess::Active
+                    || revision <= state.revision
+                {
+                    return Ok(());
+                }
+                self.cancel_remote("Local clipboard changed");
+                self.queue_remote_fetch(None);
+                match content {
+                    ClipboardContent::Text(text) => self.set_local_text(text)?,
+                    ClipboardContent::Files(paths) => {
+                        if !self.file_available.load(Ordering::SeqCst) {
+                            anyhow::bail!("Server does not support clipboard files");
+                        }
+                        let (snapshot, _) = prepared.expect("prepared file snapshot");
+                        let hash = file_list_fingerprint(&paths);
+                        let descriptors = self
+                            .files
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .set_local_snapshot(snapshot, hash);
+                        self.state
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .local_files = true;
+                        self.send_clipboard_message(ClipboardMessage::SendInitiateFileCopy(
+                            descriptors,
+                        ));
+                    }
+                    ClipboardContent::Empty => {
+                        let mut clipboard = self.state.lock().unwrap_or_else(|p| p.into_inner());
+                        clipboard.local_files = false;
+                        clipboard.local_text.clear();
+                        drop(clipboard);
+                        self.send_clipboard_message(ClipboardMessage::SendInitiateCopy(Vec::new()));
+                    }
+                }
+                state.revision = revision;
+            }
+        }
+        Ok(())
+    }
+
+    fn complete_remote(&self) -> Result<(), String> {
+        let state = self.managed.lock().unwrap_or_else(|p| p.into_inner());
+        if state.access == ClipboardAccess::Disabled {
+            return Err("Clipboard ownership revoked".into());
+        }
+        let (id, paths) = self
+            .files
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .complete_remote()?;
+        if !self.emit(ClipboardEvent::Ready {
+            epoch: state.epoch,
+            request: state.request,
+            content: ClipboardContent::Files(paths),
+            transfer_id: Some(id),
+        }) {
+            return Err(
+                "Clipboard file list exceeds IPC limits or the application disconnected".into(),
+            );
+        }
+        Ok(())
     }
 
     fn local_text(&self) -> String {
@@ -285,7 +514,12 @@ impl ClipboardBridge {
     }
 
     pub(super) fn stop(&self) {
+        let _operation = self.operations.lock().unwrap_or_else(|p| p.into_inner());
         self.shutdown.store(true, Ordering::SeqCst);
+        self.commands
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take();
         self.cancel_remote("RDP session disconnected");
         self.files
             .lock()
@@ -300,9 +534,7 @@ impl ClipboardBridge {
         let bridge = Arc::clone(self);
         std::thread::spawn(move || {
             while !bridge.shutdown.load(Ordering::SeqCst) {
-                if bridge.file_available.load(Ordering::SeqCst) {
-                    bridge.poll_local_files();
-                }
+                let operation = bridge.operations.lock().unwrap_or_else(|p| p.into_inner());
                 let expired = bridge
                     .files
                     .lock()
@@ -319,64 +551,29 @@ impl ClipboardBridge {
                         .unwrap_or_else(|poisoned| poisoned.into_inner())
                         .expire();
                 }
+                drop(operation);
                 std::thread::sleep(Duration::from_millis(750));
             }
         });
     }
 
-    fn poll_local_files(&self) {
-        let Some(paths) = read_clipboard_paths().filter(|paths| !paths.is_empty()) else {
-            self.files
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .release_completed();
-            return;
-        };
-        let hash = file_list_fingerprint(&paths);
-        let should_publish = {
-            let mut files = self
-                .files
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if files.is_remote_clipboard(hash) {
-                return;
-            }
-            files.release_completed();
-            if files.last_local_hash == Some(hash) {
-                false
-            } else {
-                files.last_local_hash = Some(hash);
-                true
-            }
-        };
-        if !should_publish {
-            return;
-        }
-        if let Ok(snapshot) = build_local_snapshot(&paths) {
-            let descriptors = self
-                .files
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .set_local_snapshot(snapshot, hash);
-            self.send_clipboard_message(ClipboardMessage::SendInitiateFileCopy(descriptors));
-        }
-    }
-
     fn current_advertisement(&self) -> ClipboardMessage {
-        if self.file_available.load(Ordering::SeqCst)
-            && let Some(paths) = read_clipboard_paths().filter(|paths| !paths.is_empty())
-            && let Ok(snapshot) = build_local_snapshot(&paths)
-        {
-            let hash = file_list_fingerprint(&paths);
-            let descriptors = self
+        let local_files = self
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .local_files;
+        if local_files
+            && self.file_available.load(Ordering::SeqCst)
+            && let Some(descriptors) = self
                 .files
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .set_local_snapshot(snapshot, hash);
-            ClipboardMessage::SendInitiateFileCopy(descriptors)
-        } else {
-            self.initial_advertisement()
+                .unwrap_or_else(|p| p.into_inner())
+                .current_descriptors()
+        {
+            return ClipboardMessage::SendInitiateFileCopy(descriptors);
         }
+        self.initial_advertisement()
     }
 
     fn initial_advertisement(&self) -> ClipboardMessage {
@@ -442,7 +639,27 @@ impl CliprdrBackend for TextClipboardBackend {
     }
 
     fn on_remote_copy(&mut self, available_formats: &[ClipboardFormat]) {
+        let _operation = self
+            .bridge
+            .operations
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let mut state = self
+            .bridge
+            .managed
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         self.bridge.cancel_remote("Remote clipboard changed");
+        if state.access != ClipboardAccess::Active {
+            self.bridge.queue_remote_fetch(None);
+            return;
+        }
+        state.request = state.request.wrapping_add(1);
+        self.bridge.emit(ClipboardEvent::Started {
+            epoch: state.epoch,
+            request: state.request,
+            revision: state.revision,
+        });
         let file_format = self
             .bridge
             .file_available
@@ -467,7 +684,14 @@ impl CliprdrBackend for TextClipboardBackend {
     }
 
     fn on_format_data_request(&mut self, request: FormatDataRequest) {
-        let response = if request.format == ClipboardFormatId::CF_UNICODETEXT {
+        let active = self
+            .bridge
+            .managed
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .access
+            == ClipboardAccess::Active;
+        let response = if active && request.format == ClipboardFormatId::CF_UNICODETEXT {
             OwnedFormatDataResponse::new_unicode_string(&self.bridge.local_text())
         } else {
             OwnedFormatDataResponse::new_error()
@@ -477,6 +701,11 @@ impl CliprdrBackend for TextClipboardBackend {
     }
 
     fn on_format_data_response(&mut self, response: FormatDataResponse<'_>) {
+        let _operation = self
+            .bridge
+            .operations
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         let reply = self
             .bridge
             .finish_remote_fetch(FetchKind::Text, response.is_error());
@@ -489,6 +718,18 @@ impl CliprdrBackend for TextClipboardBackend {
     }
 
     fn on_file_contents_request(&mut self, request: FileContentsRequest) {
+        let state = self
+            .bridge
+            .managed
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if state.access != ClipboardAccess::Active {
+            self.bridge
+                .send_clipboard_message(ClipboardMessage::SendFileContentsResponse(
+                    FileContentsResponse::new_error(request.stream_id),
+                ));
+            return;
+        }
         let response = self
             .bridge
             .files
@@ -501,6 +742,11 @@ impl CliprdrBackend for TextClipboardBackend {
     }
 
     fn on_file_contents_response(&mut self, response: FileContentsResponse<'_>) {
+        let _operation = self
+            .bridge
+            .operations
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         let failure_progress = self
             .bridge
             .transfer_progress(RdpClipboardTransferStatus::Failed, None);
@@ -522,18 +768,8 @@ impl CliprdrBackend for TextClipboardBackend {
                     let completed = self
                         .bridge
                         .transfer_progress(RdpClipboardTransferStatus::Completed, None);
-                    match self
-                        .bridge
-                        .files
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner())
-                        .complete_remote()
-                    {
-                        Ok(()) => {
-                            if let Some(progress) = completed {
-                                self.bridge.send_transfer_progress(progress);
-                            }
-                        }
+                    match self.bridge.complete_remote() {
+                        Ok(()) => {} // Application reports completion after publication.
                         Err(error) => {
                             if let Some(mut progress) = completed {
                                 progress.status = RdpClipboardTransferStatus::Failed;
@@ -574,11 +810,23 @@ impl CliprdrBackend for TextClipboardBackend {
         files: &[ironrdp_cliprdr::pdu::FileDescriptor],
         clip_data_id: Option<u32>,
     ) {
+        let _operation = self
+            .bridge
+            .operations
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         let reply = self.bridge.finish_remote_fetch(FetchKind::FileList, false);
         if !reply.accepted {
             return;
         }
         if self.bridge.shutdown.load(Ordering::SeqCst)
+            || self
+                .bridge
+                .managed
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .access
+                == ClipboardAccess::Disabled
             || !self.bridge.file_available.load(Ordering::SeqCst)
         {
             return;
@@ -601,18 +849,8 @@ impl CliprdrBackend for TextClipboardBackend {
                     let completed = self
                         .bridge
                         .transfer_progress(RdpClipboardTransferStatus::Completed, None);
-                    match self
-                        .bridge
-                        .files
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner())
-                        .complete_remote()
-                    {
-                        Ok(()) => {
-                            if let Some(progress) = completed {
-                                self.bridge.send_transfer_progress(progress);
-                            }
-                        }
+                    match self.bridge.complete_remote() {
+                        Ok(()) => {} // Application reports completion after publication.
                         Err(error) => {
                             if let Some(mut progress) = completed {
                                 progress.status = RdpClipboardTransferStatus::Failed;
@@ -790,3 +1028,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod managed_tests;

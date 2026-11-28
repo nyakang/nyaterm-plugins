@@ -54,6 +54,8 @@ pub fn validate_committed_text(text: &str) -> Result<(), CommittedTextError> {
 /// Static features implemented by an RDP helper for this IPC version.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RdpServerCapabilities {
+    #[serde(default)]
+    pub managed_clipboard: bool,
     pub committed_unicode_text: bool,
     pub secure_attention: bool,
     /// Ordered desktop submission boundaries, emitted only when the client opts in.
@@ -733,6 +735,10 @@ pub enum RdpRuntimeEvent {
         session_id: String,
         event: RemoteCursorEvent,
     },
+    ManagedClipboard {
+        session_id: String,
+        event: crate::clipboard::ClipboardEvent,
+    },
     Clipboard {
         session_id: String,
         text: String,
@@ -1127,6 +1133,8 @@ pub enum RdpControlMessage {
         sequence: u64,
     },
     ClientHello {
+        #[serde(default)]
+        managed_clipboard: bool,
         version: u32,
         /// Missing on legacy IPC 13 clients, which must not receive new messages.
         #[serde(default)]
@@ -1174,6 +1182,14 @@ pub enum RdpControlMessage {
     Resize {
         session_id: String,
         metrics: RdpDisplayMetrics,
+    },
+    ManagedClipboard {
+        session_id: String,
+        command: crate::clipboard::ClipboardCommand,
+    },
+    ManagedClipboardEvent {
+        session_id: String,
+        event: crate::clipboard::ClipboardEvent,
     },
     Clipboard {
         session_id: String,
